@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Al-Abakera Serverless Engine</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Supabase JS Client library -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        neonBlue: '#00f0ff',
+                        neonRed: '#ff0055',
+                        cyberDark: '#090d16'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .glass {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .neon-border-blue { box-shadow: 0 0 15px rgba(0, 240, 255, 0.2); border-color: #00f0ff; }
+        .neon-border-red { box-shadow: 0 0 15px rgba(ff, 0, 85, 0.2); border-color: #ff0055; }
+    </style>
+</head>
+<body class="bg-cyberDark text-slate-100 min-h-screen font-sans selection:bg-neonBlue selection:text-black">
+
+    <!-- TOP NAVIGATION / STATUS BAR -->
+    <header class="w-full py-4 px-6 border-b border-white/5 glass flex justify-between items-center fixed top-0 z-50">
+        <div class="flex items-center space-x-3">
+            <div class="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" id="supabase-status"></div>
+            <span class="text-sm tracking-widest font-mono font-bold text-white/70">AL-ABAKERA ENGINE v2.0</span>
+        </div>
+        <div id="room-badge" class="hidden px-3 py-1 rounded bg-white/10 font-mono text-xs tracking-wider">
+            ROOM: <span id="active-room-code" class="text-neonBlue font-bold">-----</span>
+        </div>
+    </header>
+
+    <!-- MAIN VIEW CONTAINER -->
+    <main class="pt-24 pb-12 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        
+        <!-- ========================================== -->
+        <!-- VIEW 1: LOBBY & AUTHENTICATION             -->
+        <!-- ========================================== -->
+        <section id="view-lobby" class="max-w-md mx-auto mt-12 space-y-6">
+            <div class="text-center space-y-2">
+                <h1 class="text-4xl font-extrabold tracking-tighter bg-gradient-to-r from-neonBlue to-purple-500 bg-clip-text text-transparent">
+                    AL-ABAKERA GAMEPLAY
+                </h1>
+                <p class="text-xs text-slate-400 uppercase tracking-widest">Serverless Realtime Multi-Mode Platform</p>
+            </div>
+
+            <!-- Configuration Card -->
+            <div class="glass p-6 rounded-2xl space-y-4 shadow-2xl">
+                <div>
+                    <label class="block text-xs font-mono uppercase tracking-wider text-slate-400 mb-2">Username</label>
+                    <input type="text" id="input-username" placeholder="Enter handle..." class="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-neonBlue transition-all font-mono text-sm">
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 pt-2">
+                    <button onclick="switchRoleView('player')" class="p-3 rounded-xl border border-white/10 text-center hover:border-neonBlue focus:border-neonBlue transition-all group bg-white/5">
+                        <span class="block text-sm font-bold">Join Match</span>
+                        <span class="text-[10px] text-slate-400 font-mono">As Player / Team</span>
+                    </button>
+                    <button onclick="switchRoleView('host')" class="p-3 rounded-xl border border-white/10 text-center hover:border-purple-500 focus:border-purple-500 transition-all group bg-white/5">
+                        <span class="block text-sm font-bold">Host / Educate</span>
+                        <span class="text-[10px] text-slate-400 font-mono">Control Dashboard</span>
+                    </button>
+                </div>
+
+                <!-- Contextual Dynamic Form Fields -->
+                <div id="lobby-context-fields" class="space-y-4 pt-2 border-t border-white/5">
+                    <!-- Default Player Configuration Fields -->
+                    <div id="player-inputs" class="space-y-3">
+                        <input type="text" id="input-room-code" placeholder="Enter 5-Digit Room Code..." class="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-center tracking-widest font-mono text-lg uppercase focus:outline-none focus:border-neonBlue">
+                        <select id="select-team" class="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-neonBlue">
+                            <option value="Team_A">Join Team A (Blue)</option>
+                            <option value="Team_B">Join Team B (Red)</option>
+                            <option value="Solo">Solo Mode (Arcade)</option>
+                        </select>
+                        <button onclick="actionJoinRoom()" class="w-full bg-gradient-to-r from-cyan-500 to-blue-600 font-bold py-3.5 rounded-xl shadow-lg shadow-blue-500/20 active:scale-[0.99] transition-transform text-sm uppercase tracking-wider">Connect to Session</button>
+                    </div>
+
+                    <!-- Host Configuration Fields -->
+                    <div id="host-inputs" class="hidden space-y-3">
+                        <select id="select-game-mode" class="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-purple-500">
+                            <option value="classroom">Classroom / Educational Mode</option>
+                            <option value="tournament">Tournament (Strict Rules)</option>
+                            <option value="solo">Solo Testing Mode</option>
+                        </select>
+                        <button onclick="actionCreateRoom()" class="w-full bg-gradient-to-r from-purple-600 to-indigo-600 font-bold py-3.5 rounded-xl shadow-lg shadow-purple-500/20 active:scale-[0.99] transition-transform text-sm uppercase tracking-wider">Initialize Live Room</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ========================================== -->
+        <!-- VIEW 2: PLAYER / COMPETITOR SCREEN         -->
+        <!-- ========================================== -->
+        <section id="view-player" class="hidden grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <!-- Left Panel: Scoreboard & Status -->
+            <div class="lg:col-span-1 space-y-4">
+                <!-- Team A Core Stats -->
+                <div class="glass p-4 rounded-xl border-l-4 border-neonBlue">
+                    <h3 class="text-xs uppercase font-mono tracking-wider text-slate-400">Team A (Blue)</h3>
+                    <div class="text-3xl font-black font-mono text-neonBlue mt-1" id="score-team-a">000</div>
+                </div>
+                <!-- Team B Core Stats -->
+                <div class="glass p-4 rounded-xl border-l-4 border-neonRed">
+                    <h3 class="text-xs uppercase font-mono tracking-wider text-slate-400">Team B (Red)</h3>
+                    <div class="text-3xl font-black font-mono text-neonRed mt-1" id="score-team-b">000</div>
+                </div>
+                <!-- Current Active Powerups Inventory -->
+                <div class="glass p-4 rounded-xl space-y-3">
+                    <h3 class="text-xs uppercase font-mono tracking-wider text-slate-400">Tactical Modules</h3>
+                    <div class="grid grid-cols-3 gap-2">
+                        <button id="powerup-shield" class="p-2 rounded bg-white/5 border border-white/10 text-center hover:bg-white/10 transition-all text-xs font-mono font-bold" onclick="usePowerup('shield')">🛡️ SHLD</button>
+                        <button id="powerup-freeze" class="p-2 rounded bg-white/5 border border-white/10 text-center hover:bg-white/10 transition-all text-xs font-mono font-bold" onclick="usePowerup('freeze')">❄️ FRZ</button>
+                        <button id="powerup-fifty" class="p-2 rounded bg-white/5 border border-white/10 text-center hover:bg-white/10 transition-all text-xs font-mono font-bold" onclick="usePowerup('fifty')">🌓 50:50</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Center Panel: Live Question Display & Interactive Mechanisms -->
+            <div class="lg:col-span-3 space-y-6">
+                <!-- Arena Display Core Screen -->
+                <div class="glass p-8 rounded-2xl relative min-h-[300px] flex flex-col justify-between overflow-hidden">
+                    <!-- Progress / Round Bar Header -->
+                    <div class="flex justify-between items-center w-full border-b border-white/5 pb-4">
+                        <span id="player-round-title" class="text-xs font-mono uppercase tracking-widest text-slate-400">ROUND 1: KNOWLEDGE WHEEL</span>
+                        <div class="px-3 py-1 rounded bg-red-500/10 border border-red-500/20 text-neonRed text-xs font-mono font-bold" id="player-timer">TIME: 00s</div>
+                    </div>
+
+                    <!-- Question Container Body -->
+                    <div class="my-8 space-y-4">
+                        <h2 id="player-question-display" class="text-xl md:text-2xl font-bold leading-relaxed">Waiting for host to dispatch the next question...</h2>
+                        
+                        <!-- Dynamic Multimedia Container Box -->
+                        <div id="multimedia-wrapper" class="hidden w-full max-h-64 rounded-xl overflow-hidden border border-white/10 bg-black/50 relative">
+                            <img id="question-image" src="" class="w-full h-full object-contain filter blur-md transition-all duration-700" alt="Multimedia Prompt">
+                        </div>
+                    </div>
+
+                    <!-- Input / Options Mechanics UI Matrix -->
+                    <div id="interaction-sandbox" class="w-full">
+                        <!-- Option Variant A/B/C/D Grid Layout -->
+                        <div id="layout-options" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <button onclick="submitAnswer('A')" class="p-4 rounded-xl bg-white/5 border border-white/10 hover:border-neonBlue hover:bg-neonBlue/5 text-left font-medium transition-all flex items-center space-x-3">
+                                <span class="bg-white/10 px-2.5 py-1 rounded text-xs font-mono">A</span> <span id="opt-text-A">...</span>
+                            </button>
+                            <button onclick="submitAnswer('B')" class="p-4 rounded-xl bg-white/5 border border-white/10 hover:border-neonBlue hover:bg-neonBlue/5 text-left font-medium transition-all flex items-center space-x-3">
+                                <span class="bg-white/10 px-2.5 py-1 rounded text-xs font-mono">B</span> <span id="opt-text-B">...</span>
+                            </button>
+                            <button onclick="submitAnswer('C')" class="p-4 rounded-xl bg-white/5 border border-white/10 hover:border-neonBlue hover:bg-neonBlue/5 text-left font-medium transition-all flex items-center space-x-3">
+                                <span class="bg-white/10 px-2.5 py-1 rounded text-xs font-mono">C</span> <span id="opt-text-C">...</span>
+                            </button>
+                            <button onclick="submitAnswer('D')" class="p-4 rounded-xl bg-white/5 border border-white/10 hover:border-neonBlue hover:bg-neonBlue/5 text-left font-medium transition-all flex items-center space-x-3">
+                                <span class="bg-white/10 px-2.5 py-1 rounded text-xs font-mono">D</span> <span id="opt-text-D">...</span>
+                            </button>
+                        </div>
+
+                        <!-- Rapid Fire Mechanism Controls -->
+                        <div id="layout-rapid-fire" class="hidden flex space-x-3">
+                            <input type="text" id="input-rapid-answer" placeholder="Type answer directly..." class="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-neonBlue font-mono">
+                            <button onclick="submitRapidAnswer()" class="bg-emerald-600 hover:bg-emerald-500 font-bold px-6 rounded-xl text-sm uppercase">Submit</button>
+                            <button onclick="triggerPass()" class="bg-white/10 hover:bg-white/20 border border-white/10 text-white font-mono font-bold px-6 rounded-xl text-sm uppercase">PASS (إسبق)</button>
+                        </div>
+
+                        <!-- Massive High-Performance Buzzer Mechanical Overlay -->
+                        <div id="layout-buzzer" class="hidden pt-2">
+                            <button id="btn-master-buzzer" onclick="hitBuzzer()" class="w-full py-10 rounded-2xl bg-gradient-to-b from-red-600 to-red-800 border-t-4 border-red-500 text-center font-black text-2xl uppercase tracking-widest shadow-2xl shadow-red-600/30 active:scale-[0.97] transition-all transform hover:from-red-500 hover:to-red-700">
+                                HIT BUZZER
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ========================================== -->
+        <!-- VIEW 3: HOST / EDUCATOR PANEL              -->
+        <!-- ========================================== -->
+        <section id="view-host" class="hidden grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Left Execution Controls Column -->
+            <div class="lg:col-span-1 space-y-4">
+                <div class="glass p-5 rounded-xl space-y-4">
+                    <h3 class="text-xs uppercase font-mono tracking-wider text-purple-400">Match Orchestration</h3>
+                    <div class="space-y-2">
+                        <label class="block text-[11px] font-mono text-slate-400">Select Interactive Phase</label>
+                        <select id="host-round-select" class="w-full bg-black/40 border border-white/10 rounded-lg p-2.5 text-xs text-white">
+                            <option value="1">Round 1: Knowledge Wheel</option>
+                            <option value="2">Round 2: Rapid Fire Session</option>
+                            <option value="3">Round 3: Video/Audio Images</option>
+                            <option value="4">Round 4: Decisive Sudden Penalty</option>
+                        </select>
+                    </div>
+                    <button onclick="dispatchNextQuestion()" class="w-full bg-purple-600 hover:bg-purple-500 font-bold py-3 rounded-xl text-xs uppercase tracking-wider transition-all">Broadcast Next Question</button>
+                    <button onclick="clearSystemBuzzer()" class="w-full bg-white/5 border border-white/10 hover:bg-white/10 font-mono text-xs py-2 rounded-lg transition-all">Reset Locked Buzzers</button>
+                </div>
+
+                <!-- Live Score Adjustment Panel Override -->
+                <div class="glass p-5 rounded-xl space-y-3">
+                    <h3 class="text-xs uppercase font-mono tracking-wider text-purple-400">Manual Points Injector</h3>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <span class="block text-[10px] font-mono text-slate-400 mb-1">TEAM A</span>
+                            <div class="flex space-x-1">
+                                <button onclick="modifyPoints('A', 10)" class="bg-neonBlue/20 text-neonBlue px-2 py-1 rounded text-xs font-mono font-bold">+10</button>
+                                <button onclick="modifyPoints('A', -10)" class="bg-red-500/20 text-red-400 px-2 py-1 rounded text-xs font-mono font-bold">-10</button>
+                            </div>
+                        </div>
+                        <div>
+                            <span class="block text-[10px] font-mono text-slate-400 mb-1">TEAM B</span>
+                            <div class="flex space-x-1">
+                                <button onclick="modifyPoints('B', 10)" class="bg-neonRed/20 text-neonRed px-2 py-1 rounded text-xs font-mono font-bold">+10</button>
+                                <button onclick="modifyPoints('B', -10)" class="bg-red-500/20 text-red-400 px-2 py-1 rounded text-xs font-mono font-bold">-10</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Performance & Realtime Logs Column -->
+            <div class="lg:col-span-2 space-y-6">
+                <div class="glass p-6 rounded-2xl min-h-[450px] flex flex-col justify-between">
+                    <div>
+                        <div class="flex justify-between items-center border-b border-white/5 pb-3">
+                            <h3 class="text-sm font-bold tracking-tight">Active Live Broadcast Status Log</h3>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-purple-500/20 text-purple-300">ADMIN CONTROL</span>
+                        </div>
+                        
+                        <!-- Telemetry / Monitoring Board Grid -->
+                        <div class="grid grid-cols-3 gap-4 my-4">
+                            <div class="bg-black/30 p-3 rounded-lg border border-white/5">
+                                <span class="block text-[10px] font-mono text-slate-400">BUZZER LOCKIN</span>
+                                <span id="log-buzzer-winner" class="text-sm font-bold text-neonBlue font-mono">None Locked</span>
+                            </div>
+                            <div class="bg-black/30 p-3 rounded-lg border border-white/5">
+                                <span class="block text-[10px] font-mono text-slate-400">RESPONSE LATENCY</span>
+                                <span id="log-buzzer-latency" class="text-sm font-bold text-emerald-400 font-mono">0.00 ms</span>
+                            </div>
+                            <div class="bg-black/30 p-3 rounded-lg border border-white/5">
+                                <span class="block text-[10px] font-mono text-slate-400">ROOM POPULATION</span>
+                                <span id="log-room-count" class="text-sm font-bold text-slate-200 font-mono">0 Active</span>
+                            </div>
+                        </div>
+
+                        <!-- Active Question Display Preview for Host -->
+                        <div class="bg-purple-950/20 border border-purple-500/20 p-4 rounded-xl space-y-2">
+                            <span class="text-[10px] font-mono uppercase tracking-wider text-purple-400 block">Active Live Question Payload</span>
+                            <p id="host-question-preview" class="text-sm font-medium">No question dispatched yet.</p>
+                            <p id="host-answer-preview" class="text-xs font-mono text-emerald-400">Answer: ----</p>
+                        </div>
+                    </div>
+
+                    <!-- Connected Users List View -->
+                    <div class="mt-4 pt-4 border-t border-white/5">
+                        <span class="text-[10px] font-mono uppercase text-slate-400 block mb-2">Connected Participants Roster</span>
+                        <div id="host-roster-list" class="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-32 overflow-y-auto text-xs font-mono">
+                            <!-- Injected programmatically -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- ========================================== -->
+    <!-- JAVASCRIPT ARCHITECTURE & SUPABASE LAYER   -->
+    <!-- ========================================== -->
+    <script>
+        // --- 1. CONFIGURATION & STATE STORAGE ---
+        let supabaseClient = null;
+        let localState = {
+            userId: null,
+            username: '',
+            role: 'player', // 'player' or 'host'
+            roomCode: '',
+            team: 'Solo',
+            activeChannel: null,
+            currentQuestion: null
+        };
+
+        // Initialize Supabase Client (Fill with target deployment credentials)
+        const SUPABASE_URL = "https://your-project-id.supabase.co"; 
+        const SUPABASE_ANON_KEY = "your-anon-key-here";
+
+        try {
+            if(SUPABASE_URL.includes("your-project-id")) {
+                console.warn("Supabase credentials unconfigured. UI driving in Sandbox Mock Engine mode.");
+            } else {
+                supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+                document.getElementById('supabase-status').classList.replace('bg-emerald-500', 'bg-blue-500');
+            }
+        } catch (e) {
+            console.error("Supabase Initialization Error:", e);
+        }
+
+        // --- 2. DELEGATION & VIEW NAVIGATION LOGIC ---
+        function switchRoleView(role) {
+            localState.role = role;
+            const playerInputs = document.getElementById('player-inputs');
+            const hostInputs = document.getElementById('host-inputs');
+            
+            if(role === 'host') {
+                playerInputs.classList.add('hidden');
+                hostInputs.classList.remove('hidden');
+            } else {
+                hostInputs.classList.add('hidden');
+                playerInputs.classList.remove('hidden');
+            }
+        }
+
+        function routeToScreen(viewName) {
+            document.getElementById('view-lobby').classList.add('hidden');
+            document.getElementById('view-player').classList.add('hidden');
+            document.getElementById('view-host').classList.add('hidden');
+
+            if(viewName === 'player') document.getElementById('view-player').classList.remove('hidden');
+            if(viewName === 'host') document.getElementById('view-host').classList.remove('hidden');
+        }
+
+        // --- 3. SERVERLESS ACTIONS & EXECUTION ---
+        async function actionCreateRoom() {
+            setupLocalProfile();
+            localState.roomCode = Math.random().toString(36).substring(2, 7).toUpperCase();
+            
+            document.getElementById('room-badge').classList.remove('hidden');
+            document.getElementById('active-room-code').innerText = localState.roomCode;
+            
+            routeToScreen('host');
+            initializeRealtimeChannel(localState.roomCode);
+        }
+
+        async function actionJoinRoom() {
+            setupLocalProfile();
+            const codeInput = document.getElementById('input-room-code').value.trim().toUpperCase();
+            if(!codeInput) return alert("Please present a valid Room Code");
+            
+            localState.roomCode = codeInput;
+            localState.team = document.getElementById('select-team').value;
+
+            document.getElementById('room-badge').classList.remove('hidden');
+            document.getElementById('active-room-code').innerText = localState.roomCode;
+
+            routeToScreen('player');
+            initializeRealtimeChannel(localState.roomCode);
+        }
+
+        function setupLocalProfile() {
+            localState.username = document.getElementById('input-username').value.trim() || "User_" + Math.floor(Math.random() * 1000);
+            localState.userId = Math.floor(Math.random() * 100000);
+        }
+
+        // --- 4. REALTIME SOCKET/BROADCAST ORCHESTRATION LAYER ---
+        function initializeRealtimeChannel(roomCode) {
+            if(!supabaseClient) {
+                console.warn("Mock Channel initialization triggered.");
+                return;
+            }
+
+            // Establish real-time persistent subscription channel via WebSockets
+            localState.activeChannel = supabaseClient.channel(`room:${roomCode}`, {
+                config: { presence: { key: localState.username } }
+            });
+
+            localState.activeChannel
+                .on('broadcast', { event: 'question-dispatch' }, payload => handleReceivedQuestion(payload))
+                .on('broadcast', { event: 'buzzer-lockin' }, payload => handleBuzzerLockIn(payload))
+                .on('broadcast', { event: 'score-override' }, payload => handleScoreOverride(payload))
+                .on('presence', { event: 'sync' }, () => {
+                    const state = localState.activeChannel.presenceState();
+                    updateRosterList(state);
+                })
+                .subscribe(async (status) => {
+                    if (status === 'SUBSCRIBED') {
+                        await localState.activeChannel.track({
+                            user_id: localState.userId,
+                            team: localState.team,
+                            joined_at: new Date().toISOString()
+                        });
+                    }
+                });
+        }
+
+        // --- 5. INTERACTION ENGINE PIPELINE ---
+        function dispatchNextQuestion() {
+            const currentRoundSelected = document.getElementById('host-round-select').value;
+            
+            // Mock structural logic data simulation matrix
+            const mockPayload = {
+                id: Math.floor(Math.random() * 1000),
+                round: currentRoundSelected,
+                type: currentRoundSelected == '1' ? 'options' : (currentRoundSelected == '2' ? 'rapid' : 'buzzer'),
+                text: "Which digital architecture configuration describes a network execution sequence processing operations without maintaining dedicated host servers?",
+                choices: { A: "Monolithic VM", B: "Serverless Architecture", C: "Edge Logic Core", D: "Distributed State Engine" },
+                answer: "B",
+                timestamp: Date.now()
+            };
+
+            // Update local Host previews
+            document.getElementById('host-question-preview').innerText = mockPayload.text;
+            document.getElementById('host-answer-preview').innerText = `Answer: ${mockPayload.answer}`;
+
+            if(localState.activeChannel) {
+                localState.activeChannel.send({
+                    type: 'broadcast',
+                    event: 'question-dispatch',
+                    payload: mockPayload
+                });
+            }
+        }
+
+        function handleReceivedQuestion(envelope) {
+            const data = envelope.payload;
+            localState.currentQuestion = data;
+            
+            document.getElementById('player-question-display').innerText = data.text;
+            
+            // Reset Interaction Sandbox Visibility Modules
+            document.getElementById('layout-options').classList.add('hidden');
+            document.getElementById('layout-rapid-fire').classList.add('hidden');
+            document.getElementById('layout-buzzer').classList.add('hidden');
+
+            // Route layouts contextually according to Al-Abakera structural logic
+            if(data.type === 'options') {
+                document.getElementById('layout-options').classList.remove('hidden');
+                document.getElementById('opt-text-A').innerText = data.choices.A;
+                document.getElementById('opt-text-B').innerText = data.choices.B;
+                document.getElementById('opt-text-C').innerText = data.choices.C;
+                document.getElementById('opt-text-D').innerText = data.choices.D;
+            } else if (data.type === 'rapid') {
+                document.getElementById('layout-rapid-fire').classList.remove('hidden');
+            } else {
+                document.getElementById('layout-buzzer').classList.remove('hidden');
+            }
+        }
+
+        function hitBuzzer() {
+            const hitTime = Date.now();
+            const latency = hitTime - (localState.currentQuestion ? localState.currentQuestion.timestamp : hitTime);
+            
+            if(localState.activeChannel) {
+                localState.activeChannel.send({
+                    type: 'broadcast',
+                    event: 'buzzer-lockin',
+                    payload: {
+                        username: localState.username,
+                        team: localState.team,
+                        latency_ms: latency
+                    }
+                });
+            }
+        }
+
+        function handleBuzzerLockIn(envelope) {
+            const log = envelope.payload;
+            document.getElementById('log-buzzer-winner').innerText = `${log.username} (${log.team})`;
+            document.getElementById('log-buzzer-latency').innerText = `${log.latency_ms} ms`;
+            
+            if(localState.role === 'player') {
+                document.getElementById('btn-master-buzzer').disabled = true;
+                document.getElementById('btn-master-buzzer').innerText = `LOCKED BY ${log.username.toUpperCase()}`;
+            }
+        }
+
+        function modifyPoints(team, diff) {
+            if(localState.activeChannel) {
+                localState.activeChannel.send({
+                    type: 'broadcast',
+                    event: 'score-override',
+                    payload: { team: team, offset: diff }
+                });
+            }
+        }
+
+        function handleScoreOverride(envelope) {
+            const data = envelope.payload;
+            const targetElementId = data.team === 'A' ? 'score-team-a' : 'score-team-b';
+            const currentVal = parseInt(document.getElementById(targetElementId).innerText);
+            const calculatedScore = Math.max(0, currentVal + data.offset);
+            
+            document.getElementById(targetElementId).innerText = String(calculatedScore).padStart(3, '0');
+        }
+
+        function clearSystemBuzzer() {
+            document.getElementById('log-buzzer-winner').innerText = "None Locked";
+            document.getElementById('log-buzzer-latency').innerText = "0.00 ms";
+        }
+
+        function updateRosterList(presenceState) {
+            const container = document.getElementById('host-roster-list');
+            if(!container) return;
+            container.innerHTML = '';
+            
+            let count = 0;
+            for (let key in presenceState) {
+                count++;
+                const meta = presenceState[key][0];
+                const badge = document.createElement('div');
+                badge.className = "bg-white/5 p-1.5 rounded border border-white/5 flex justify-between";
+                badge.innerHTML = `<span>⚡ ${key}</span><span class="text-slate-400 text-[9px] uppercase">${meta.team || 'None'}</span>`;
+                container.appendChild(badge);
+            }
+            document.getElementById('log-room-count').innerText = `${count} Active`;
+        }
+
+        // --- 6. OPTIONAL AUXILIARY GAME MECHANICS ---
+        function usePowerup(type) {
+            alert(`Tactical module activated: ${type.toUpperCase()}`);
+            document.getElementById(`powerup-${type}`).disabled = true;
+            document.getElementById(`powerup-${type}`).classList.add('opacity-30');
+        }
+    </script>
+</body>
+</html>
