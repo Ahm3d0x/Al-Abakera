@@ -241,8 +241,12 @@ export default function ClientPage() {
   const [latency, setLatency] = useState<number | null>(null);
 
   // Configuration and Room States
-  const [selectedMode] = useState<GameModeType>('FREE_FOR_ALL');
-  const [selectedBuzzer] = useState<BuzzerType>('STANDARD');
+  const [selectedMode, setSelectedMode] = useState<GameModeType>('FREE_FOR_ALL');
+  const [selectedBuzzer, setSelectedBuzzer] = useState<BuzzerType>('STANDARD');
+  const [selectedRounds, setSelectedRounds] = useState<number>(5);
+  const [selectedTimeLimit, setSelectedTimeLimit] = useState<number>(30);
+  const [selectedMaxPlayers, setSelectedMaxPlayers] = useState<number>(6);
+  const [isSpectatorJoin, setIsSpectatorJoin] = useState<boolean>(false);
   const [roomCodeInput, setRoomCodeInput] = useState('');
   const [currentRoom, setCurrentRoom] = useState<any>(null);
   const [participants, setParticipants] = useState<any[]>([]);
@@ -254,6 +258,7 @@ export default function ClientPage() {
   const [timeLeft, setTimeLeft] = useState(30);
   const [buzzerActive, setBuzzerActive] = useState(true);
   const [isBuzzed, setIsBuzzed] = useState(false);
+  const [buzzedUser, setBuzzedUser] = useState<string | null>(null);
   
   // Answer & Scoring states
   const [selectedOption, setSelectedOption] = useState<any>(null); // For MCQ, T/F, Multi-Select
@@ -272,6 +277,7 @@ export default function ClientPage() {
   // Feedback states
   const [answerSubmitted, setAnswerSubmitted] = useState(false);
   const [isAnswerCorrect, setIsAnswerCorrect] = useState<boolean | null>(null);
+  const [revealedCorrectAnswer, setRevealedCorrectAnswer] = useState<any>(null);
   
   // Timers and Refs
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -355,6 +361,18 @@ export default function ClientPage() {
 
     if (userAns === null || userAns === undefined || (Array.isArray(userAns) && userAns.length === 0)) {
       alert(isRtl ? 'من فضلك اختر أو اكتب إجابة أولاً!' : 'Please select or enter an answer first!');
+      return;
+    }
+
+    // Co-ordinate multiplayer matches via Socket.io instead of local grading
+    if (currentRoom) {
+      if (socketRef.current) {
+        socketRef.current.emit('game:submit_answer', {
+          roomId: currentRoom.id,
+          answer: userAns
+        });
+      }
+      setAnswerSubmitted(true);
       return;
     }
 
@@ -545,10 +563,81 @@ export default function ClientPage() {
         }
       });
 
+      socket.on('room:config_updated', (data: { config: any }) => {
+        setCurrentRoom((prev: any) => prev ? { ...prev, config: data.config } : null);
+      });
+
       socket.on(GameEvents.START_GAME, () => {
         playSFX('slam');
         triggerVibrate([200, 100, 200]);
         setScreen('cinematic');
+      });
+
+      // Multiplayer synchronized gameplay events
+      socket.on('game:round_start', (data: { roundIndex: number; totalRounds: number; question: any; timeLeft: number; scores: any }) => {
+        setGameMode('FREE_FOR_ALL');
+        setGameQuestions(prev => {
+          const list = [...prev];
+          list[data.roundIndex] = data.question;
+          return list;
+        });
+        setCurrentQIndex(data.roundIndex);
+        setTimeLeft(data.timeLeft);
+        setBuzzerActive(true);
+        setIsBuzzed(false);
+        setBuzzedUser(null);
+        setSelectedOption(null);
+        setTextAnswer('');
+        setMatchingSelections({});
+        setActiveLeftTerm(null);
+        setAnswerSubmitted(false);
+        setIsAnswerCorrect(null);
+        setRevealedCorrectAnswer(null);
+
+        if (data.question.type === 'ORDERING_QUESTION' && data.question.options) {
+          const shuffled = [...data.question.options].sort(() => Math.random() - 0.5);
+          setOrderIds(shuffled.map((o: any) => o.id));
+        }
+
+        setScreen('game');
+      });
+
+      socket.on('game:tick', (data: { timeLeft: number }) => {
+        setTimeLeft(data.timeLeft);
+      });
+
+      socket.on('game:buzzed', (data: { userId: string; username: string }) => {
+        playSFX('buzz');
+        setIsBuzzed(true);
+        setBuzzedUser(data.username);
+      });
+
+      socket.on('game:round_ended', (data: { userId: string | null; isCorrect: boolean; correctAnswer: any; explanation: string; scores: any }) => {
+        setIsAnswerCorrect(data.isCorrect);
+        setRevealedCorrectAnswer(data.correctAnswer);
+        setAnswerSubmitted(true);
+        
+        if (data.isCorrect) {
+          playSFX('correct');
+        } else {
+          playSFX('wrong');
+        }
+
+        if (data.scores) {
+          const selfScore = data.scores[user.id] || 0;
+          setScore(selfScore);
+          
+          const oppId = Object.keys(data.scores).find(id => id !== user.id);
+          if (oppId) {
+            setOpponentScore(data.scores[oppId]);
+          }
+        }
+      });
+
+      socket.on('game:ended', () => {
+        playSFX('slam');
+        setScreen('summary');
+        refreshProfile();
       });
     };
 
@@ -559,11 +648,11 @@ export default function ClientPage() {
         socketRef.current.disconnect();
       }
     };
-  }, [user, screen]);
+  }, [user, screen, refreshProfile]);
 
-  // Handle Game Timer Tick
+  // Handle Game Timer Tick (Only in local solo modes)
   useEffect(() => {
-    if (screen !== 'game' || answerSubmitted) {
+    if (screen !== 'game' || answerSubmitted || currentRoom) {
       if (timerRef.current) clearInterval(timerRef.current);
       return;
     }
@@ -586,7 +675,7 @@ export default function ClientPage() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [screen, currentQIndex, answerSubmitted, gameMode, lives]);
+  }, [screen, currentQIndex, answerSubmitted, gameMode, lives, currentRoom]);
 
   // Clean up timer on unmount
   useEffect(() => {
@@ -612,9 +701,9 @@ export default function ClientPage() {
           type: 'PUBLIC',
           config: {
             mode: selectedMode,
-            maxPlayers: 6,
-            roundsCount: 10,
-            questionTimeLimitSeconds: 30,
+            maxPlayers: selectedMaxPlayers,
+            roundsCount: selectedRounds,
+            questionTimeLimitSeconds: selectedTimeLimit,
             buzzerType: selectedBuzzer,
             allowedPowerUps: ['JOKER', 'FREEZE', 'SHIELD'],
             categoryWeights: { 'General': 100 }
@@ -663,7 +752,8 @@ export default function ClientPage() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          code: roomCodeInput.trim().toUpperCase()
+          code: roomCodeInput.trim().toUpperCase(),
+          isSpectator: isSpectatorJoin
         })
       });
 
@@ -743,6 +833,27 @@ export default function ClientPage() {
     });
   };
 
+  const updateRoomConfig = (newConfig: any) => {
+    if (!currentRoom || !socketRef.current || currentRoom.host_id !== user?.id) return;
+    const updatedConfig = {
+      ...currentRoom.config,
+      ...newConfig
+    };
+    socketRef.current.emit('room:update_config', {
+      roomId: currentRoom.id,
+      config: updatedConfig
+    });
+  };
+
+  const changeTeam = (teamId: 'team_a' | 'team_b' | null) => {
+    playSFX('click');
+    if (!currentRoom || !socketRef.current) return;
+    socketRef.current.emit('room:change_team', {
+      roomId: currentRoom.id,
+      teamId
+    });
+  };
+
   // ==========================================
   // Game Board Operations
   // ==========================================
@@ -756,7 +867,6 @@ export default function ClientPage() {
     setAnswerSubmitted(false);
     setGameQuestions(SAMPLE_QUESTIONS);
     
-    // Switch to Cinematic
     setScreen('cinematic');
   };
 
@@ -767,6 +877,14 @@ export default function ClientPage() {
 
   const handleBuzz = () => {
     if (!buzzerActive || isBuzzed) return;
+    
+    if (currentRoom) {
+      if (socketRef.current) {
+        socketRef.current.emit('game:buzz', { roomId: currentRoom.id });
+      }
+      return;
+    }
+
     playSFX('buzz');
     triggerVibrate(150);
     setIsBuzzed(true);
@@ -928,7 +1046,7 @@ export default function ClientPage() {
 
   const t = isRtl ? text.ar : text.en;
 
-  if (loading) {
+  if (loading || !user) {
     return (
       <div style={{
         minHeight: '100vh',
@@ -959,7 +1077,8 @@ export default function ClientPage() {
     );
   }
 
-  if (!user) return null;
+  const selfPart = participants.find(p => p.userId === user?.id);
+  const isSpectator = selfPart?.isSpectator || false;
 
   return (
     <div style={styles.appContainer} dir={isRtl ? 'rtl' : 'ltr'}>
@@ -1052,6 +1171,25 @@ export default function ClientPage() {
                 </button>
               </div>
 
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                marginBottom: '10px',
+                fontSize: '0.8rem',
+                color: '#8a93c0',
+                cursor: 'pointer'
+              }} onClick={() => setIsSpectatorJoin(!isSpectatorJoin)}>
+                <input
+                  type="checkbox"
+                  checked={isSpectatorJoin}
+                  onChange={(e) => setIsSpectatorJoin(e.target.checked)}
+                  style={{ cursor: 'pointer' }}
+                />
+                <span>{isRtl ? 'الانضمام كمتفرج (رؤية فقط)' : 'Join as Spectator (Watch only)'}</span>
+              </div>
+
               <div style={styles.inputJointRow}>
                 <input 
                   style={styles.jointInput} 
@@ -1077,81 +1215,372 @@ export default function ClientPage() {
         )}
 
         {/* SCREEN: LOBBY SCREEN */}
-        {screen === 'lobby' && currentRoom && (
-          <div style={styles.screenContainer}>
-            <div style={styles.lobbyHeader}>
-              <button style={styles.backBtn} onClick={leaveRoom}>◀</button>
-              <h2 style={styles.lobbyTitleText}>{t.lobbyTitle}</h2>
-              <span style={styles.configModeBadge}>{currentRoom.config?.mode}</span>
-            </div>
-
-            <div style={styles.roomParamsCard}>
-              <div style={styles.paramItem}>
-                <span style={styles.paramLabel}>{t.code}:</span>
-                <span style={styles.paramVal} className="text-glow-accent">{currentRoom.code}</span>
+        {screen === 'lobby' && currentRoom && (() => {
+          const selfPart = participants.find(p => p.userId === user?.id);
+          const isSpectator = selfPart?.isSpectator || false;
+          return (
+            <div style={styles.screenContainer}>
+              <div style={styles.lobbyHeader}>
+                <button style={styles.backBtn} onClick={leaveRoom}>◀</button>
+                <h2 style={styles.lobbyTitleText}>{t.lobbyTitle}</h2>
+                <span style={styles.configModeBadge}>{currentRoom.config?.mode}</span>
               </div>
-              <div style={styles.paramItem}>
-                <span style={styles.paramLabel}>{t.buzzer}:</span>
-                <span style={styles.paramVal}>{currentRoom.config?.buzzerType}</span>
-              </div>
-            </div>
 
-            <div style={styles.participantsGrid}>
-              {participants.map((player) => (
-                <div key={player.userId} style={styles.playerCard}>
-                  <div style={styles.playerMetaLeft}>
-                    <div style={styles.avatarCircleMock}>👤</div>
-                    <div style={styles.playerTexts}>
-                      <span style={styles.pCardUsername}>{player.username}</span>
-                      <span style={styles.pCardRank}>{player.rank}</span>
-                    </div>
+              {currentRoom.host_id === user?.id ? (
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '10px',
+                  padding: '12px 16px',
+                  backgroundColor: 'rgba(255,255,255,0.02)',
+                  border: '1px solid rgba(255,255,255,0.04)',
+                  borderRadius: '8px',
+                  margin: '12px 0'
+                }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <label style={{ fontSize: '0.65rem', color: '#8a93c0', fontWeight: 700 }}>
+                      {isRtl ? 'نمط اللعب' : 'GAME MODE'}
+                    </label>
+                    <select
+                      value={currentRoom.config?.mode}
+                      onChange={(e) => updateRoomConfig({ mode: e.target.value })}
+                      style={{
+                        backgroundColor: '#0b0d1a',
+                        color: '#ffffff',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: '4px',
+                        padding: '4px 6px',
+                        fontSize: '0.8rem',
+                        outline: 'none'
+                      }}
+                    >
+                      <option value="FREE_FOR_ALL">Free For All</option>
+                      <option value="TEAM_BATTLE">Team Battle</option>
+                    </select>
                   </div>
-                  <div style={styles.playerMetaRight}>
-                    {player.isHost && <span style={styles.hostBadge}>{t.isHost}</span>}
-                    <span style={{
-                      ...styles.lobbyReadyIndicator,
-                      color: player.isReady ? '#00ff87' : '#ffb300'
-                    }}>
-                      {player.isReady ? t.readyUp : t.cancelReady}
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <label style={{ fontSize: '0.65rem', color: '#8a93c0', fontWeight: 700 }}>
+                      {isRtl ? 'نوع البازر' : 'BUZZER TYPE'}
+                    </label>
+                    <select
+                      value={currentRoom.config?.buzzerType}
+                      onChange={(e) => updateRoomConfig({ buzzerType: e.target.value })}
+                      style={{
+                        backgroundColor: '#0b0d1a',
+                        color: '#ffffff',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: '4px',
+                        padding: '4px 6px',
+                        fontSize: '0.8rem',
+                        outline: 'none'
+                      }}
+                    >
+                      <option value="STANDARD">Standard</option>
+                      <option value="RISK">Risk Buzzer</option>
+                      <option value="SAFE">Safe Buzzer</option>
+                      <option value="COMPETITIVE">Competitive</option>
+                      <option value="SUDDEN_DEATH">Sudden Death</option>
+                    </select>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <label style={{ fontSize: '0.65rem', color: '#8a93c0', fontWeight: 700 }}>
+                      {isRtl ? 'عدد الجولات' : 'ROUNDS'}
+                    </label>
+                    <select
+                      value={currentRoom.config?.roundsCount}
+                      onChange={(e) => updateRoomConfig({ roundsCount: parseInt(e.target.value) })}
+                      style={{
+                        backgroundColor: '#0b0d1a',
+                        color: '#ffffff',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: '4px',
+                        padding: '4px 6px',
+                        fontSize: '0.8rem',
+                        outline: 'none'
+                      }}
+                    >
+                      <option value="5">5 Rounds</option>
+                      <option value="10">10 Rounds</option>
+                      <option value="15">15 Rounds</option>
+                    </select>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <label style={{ fontSize: '0.65rem', color: '#8a93c0', fontWeight: 700 }}>
+                      {isRtl ? 'وقت الإجابة' : 'TIME LIMIT'}
+                    </label>
+                    <select
+                      value={currentRoom.config?.questionTimeLimitSeconds}
+                      onChange={(e) => updateRoomConfig({ questionTimeLimitSeconds: parseInt(e.target.value) })}
+                      style={{
+                        backgroundColor: '#0b0d1a',
+                        color: '#ffffff',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: '4px',
+                        padding: '4px 6px',
+                        fontSize: '0.8rem',
+                        outline: 'none'
+                      }}
+                    >
+                      <option value="15">15 Seconds</option>
+                      <option value="30">30 Seconds</option>
+                      <option value="45">45 Seconds</option>
+                    </select>
+                  </div>
+
+                  <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '8px' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#8a93c0' }}>{isRtl ? 'رمز الغرفة:' : 'Room Code:'}</span>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#00f2fe' }} className="text-glow-accent">
+                      {currentRoom.code}
                     </span>
                   </div>
                 </div>
-              ))}
-              
-              {participants.length < 2 && (
-                <div style={styles.playerCardDashed}>
-                  <span style={styles.dashText}>{t.waitingPlayers}</span>
+              ) : (
+                <div style={styles.roomParamsCard}>
+                  <div style={styles.paramItem}>
+                    <span style={styles.paramLabel}>{t.code}:</span>
+                    <span style={styles.paramVal} className="text-glow-accent">{currentRoom.code}</span>
+                  </div>
+                  <div style={styles.paramItem}>
+                    <span style={styles.paramLabel}>{t.mode}:</span>
+                    <span style={styles.paramVal}>{currentRoom.config?.mode}</span>
+                  </div>
+                  <div style={styles.paramItem}>
+                    <span style={styles.paramLabel}>{t.buzzer}:</span>
+                    <span style={styles.paramVal}>{currentRoom.config?.buzzerType}</span>
+                  </div>
                 </div>
               )}
-            </div>
 
-            <div style={styles.lobbyActionsRow}>
-              <button style={styles.leaveLobbyBtn} onClick={leaveRoom}>
-                {t.leaveRoom}
-              </button>
-              
-              {currentRoom.host_id === user?.id ? (
-                <button 
-                  style={styles.startLobbyBtn} 
-                  onClick={startLobbyGame}
-                  disabled={participants.length < 2 || participants.some(p => !p.isReady)}
-                >
-                  {t.startMatch}
-                </button>
+              {/* PARTICIPANTS / TEAMS VIEW */}
+              {currentRoom.config?.mode === 'TEAM_BATTLE' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1, margin: '10px 0' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    {/* TEAM A */}
+                    <div style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px',
+                      padding: '10px',
+                      backgroundColor: 'rgba(0, 245, 255, 0.02)',
+                      border: '1px solid rgba(0, 245, 255, 0.05)',
+                      borderRadius: '8px',
+                      minHeight: '160px'
+                    }}>
+                      <h3 style={{ fontSize: '0.8rem', color: '#00f5ff', textAlign: 'center', margin: '0 0 6px 0', borderBottom: '1px solid rgba(0, 245, 255, 0.1)', paddingBottom: '4px' }}>
+                        {isRtl ? 'الفريق أ (الأزرق)' : 'TEAM A (Cyan)'}
+                      </h3>
+                      
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
+                        {participants.filter(p => !p.isSpectator && p.teamId === 'team_a').map((player) => (
+                          <div key={player.userId} style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '6px 10px',
+                            backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                            border: '1px solid rgba(255, 255, 255, 0.04)',
+                            borderRadius: '6px'
+                          }}>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#ffffff' }}>{player.username}</span>
+                            <span style={{ fontSize: '0.65rem', color: player.isReady ? '#00ff87' : '#ffb300' }}>
+                              {player.isReady ? '✓' : '●'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {!isSpectator && (
+                        <button
+                          onClick={() => changeTeam('team_a')}
+                          disabled={participants.find(p => p.userId === user?.id)?.teamId === 'team_a'}
+                          style={{
+                            padding: '6px',
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            backgroundColor: participants.find(p => p.userId === user?.id)?.teamId === 'team_a' ? 'rgba(255,255,255,0.05)' : 'rgba(0, 245, 255, 0.15)',
+                            border: '1px solid rgba(0, 245, 255, 0.3)',
+                            borderRadius: '4px',
+                            color: '#00f5ff',
+                            cursor: participants.find(p => p.userId === user?.id)?.teamId === 'team_a' ? 'default' : 'pointer'
+                          }}
+                        >
+                          {isRtl ? 'انضمام للفريق أ' : 'JOIN TEAM A'}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* TEAM B */}
+                    <div style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px',
+                      padding: '10px',
+                      backgroundColor: 'rgba(255, 59, 92, 0.02)',
+                      border: '1px solid rgba(255, 59, 92, 0.05)',
+                      borderRadius: '8px',
+                      minHeight: '160px'
+                    }}>
+                      <h3 style={{ fontSize: '0.8rem', color: '#ff3b5c', textAlign: 'center', margin: '0 0 6px 0', borderBottom: '1px solid rgba(255, 59, 92, 0.1)', paddingBottom: '4px' }}>
+                        {isRtl ? 'الفريق ب (الأحمر)' : 'TEAM B (Red)'}
+                      </h3>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
+                        {participants.filter(p => !p.isSpectator && p.teamId === 'team_b').map((player) => (
+                          <div key={player.userId} style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '6px 10px',
+                            backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                            border: '1px solid rgba(255, 255, 255, 0.04)',
+                            borderRadius: '6px'
+                          }}>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#ffffff' }}>{player.username}</span>
+                            <span style={{ fontSize: '0.65rem', color: player.isReady ? '#00ff87' : '#ffb300' }}>
+                              {player.isReady ? '✓' : '●'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {!isSpectator && (
+                        <button
+                          onClick={() => changeTeam('team_b')}
+                          disabled={participants.find(p => p.userId === user?.id)?.teamId === 'team_b'}
+                          style={{
+                            padding: '6px',
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            backgroundColor: participants.find(p => p.userId === user?.id)?.teamId === 'team_b' ? 'rgba(255,255,255,0.05)' : 'rgba(255, 59, 92, 0.15)',
+                            border: '1px solid rgba(255, 59, 92, 0.3)',
+                            borderRadius: '4px',
+                            color: '#ff3b5c',
+                            cursor: participants.find(p => p.userId === user?.id)?.teamId === 'team_b' ? 'default' : 'pointer'
+                          }}
+                        >
+                          {isRtl ? 'انضمام للفريق ب' : 'JOIN TEAM B'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* UNASSIGNED PLAYERS */}
+                  {participants.filter(p => !p.isSpectator && p.teamId !== 'team_a' && p.teamId !== 'team_b').length > 0 && (
+                    <div style={{
+                      padding: '8px 12px',
+                      backgroundColor: 'rgba(255,255,255,0.02)',
+                      borderRadius: '6px',
+                      fontSize: '0.75rem',
+                      color: '#8a93c0',
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: '6px',
+                      alignItems: 'center'
+                    }}>
+                      <span>{isRtl ? 'لاعبون غير معينين:' : 'Unassigned:'}</span>
+                      {participants.filter(p => !p.isSpectator && p.teamId !== 'team_a' && p.teamId !== 'team_b').map(p => (
+                        <span key={p.userId} style={{
+                          padding: '2px 6px',
+                          backgroundColor: 'rgba(255,255,255,0.04)',
+                          borderRadius: '4px',
+                          color: '#ffffff'
+                        }}>{p.username}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               ) : (
-                <button 
-                  style={{
-                    ...styles.startLobbyBtn,
-                    backgroundColor: participants.find(p => p.userId === user?.id)?.isReady ? '#ff3b5c' : '#00e676'
-                  }} 
-                  onClick={toggleReady}
-                >
-                  {participants.find(p => p.userId === user?.id)?.isReady ? t.cancelReady : t.readyUp}
-                </button>
+                <div style={styles.participantsGrid}>
+                  {participants.filter(p => !p.isSpectator).map((player) => (
+                    <div key={player.userId} style={styles.playerCard}>
+                      <div style={styles.playerMetaLeft}>
+                        <div style={styles.avatarCircleMock}>👤</div>
+                        <div style={styles.playerTexts}>
+                          <span style={styles.pCardUsername}>{player.username}</span>
+                          <span style={styles.pCardRank}>{player.rank}</span>
+                        </div>
+                      </div>
+                      <div style={styles.playerMetaRight}>
+                        {player.isHost && <span style={styles.hostBadge}>{t.isHost}</span>}
+                        <span style={{
+                          ...styles.lobbyReadyIndicator,
+                          color: player.isReady ? '#00ff87' : '#ffb300'
+                        }}>
+                          {player.isReady ? t.readyUp : t.cancelReady}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  
+                  {participants.filter(p => !p.isSpectator).length < 2 && (
+                    <div style={styles.playerCardDashed}>
+                      <span style={styles.dashText}>{t.waitingPlayers}</span>
+                    </div>
+                  )}
+                </div>
               )}
+
+              {/* SPECTATORS LIST */}
+              {participants.filter(p => p.isSpectator).length > 0 && (
+                <div style={{
+                  padding: '10px 14px',
+                  backgroundColor: 'rgba(255,255,255,0.01)',
+                  border: '1px solid rgba(255,255,255,0.03)',
+                  borderRadius: '8px',
+                  margin: '10px 0'
+                }}>
+                  <h4 style={{ fontSize: '0.7rem', color: '#8a93c0', margin: '0 0 6px 0', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    👁️ {isRtl ? 'المتفرجون' : 'Spectators'} ({participants.filter(p => p.isSpectator).length})
+                  </h4>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {participants.filter(p => p.isSpectator).map(spec => (
+                      <span key={spec.userId} style={{
+                        fontSize: '0.75rem',
+                        color: '#a0a7cc',
+                        backgroundColor: 'rgba(255,255,255,0.03)',
+                        padding: '2px 8px',
+                        borderRadius: '12px'
+                      }}>
+                        {spec.username} {spec.userId === user?.id && `(${isRtl ? 'أنت' : 'You'})`}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={styles.lobbyActionsRow}>
+                <button style={styles.leaveLobbyBtn} onClick={leaveRoom}>
+                  {t.leaveRoom}
+                </button>
+                
+                {!isSpectator && (
+                  currentRoom.host_id === user?.id ? (
+                    <button 
+                      style={styles.startLobbyBtn} 
+                      onClick={startLobbyGame}
+                      disabled={participants.filter(p => !p.isSpectator).length < 2 || participants.filter(p => !p.isSpectator).some(p => !p.isReady)}
+                    >
+                      {t.startMatch}
+                    </button>
+                  ) : (
+                    <button 
+                      style={{
+                        ...styles.startLobbyBtn,
+                        backgroundColor: participants.find(p => p.userId === user?.id)?.isReady ? '#ff3b5c' : '#00e676'
+                      }} 
+                      onClick={toggleReady}
+                    >
+                      {participants.find(p => p.userId === user?.id)?.isReady ? t.cancelReady : t.readyUp}
+                    </button>
+                  )
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* SCREEN: MATCH INTRO CINEMATIC */}
         {screen === 'cinematic' && (
@@ -1183,307 +1612,357 @@ export default function ClientPage() {
         )}
 
         {/* SCREEN: GAME BOARD */}
-        {screen === 'game' && gameQuestions.length > 0 && (
-          <div style={styles.screenContainer}>
-            <div style={styles.hudBar}>
-              <div style={styles.hudTeamPanel}>
-                <span style={styles.hudTeamName}>{user.username}</span>
-                <span style={styles.hudTeamScore}>{score} pts</span>
-                {gameMode === 'SURVIVAL' && (
-                  <div style={styles.heartsRow}>
-                    {Array.from({ length: 3 }).map((_, i) => (
-                      <span key={i} style={{ opacity: i < lives ? 1 : 0.2 }}>❤️</span>
-                    ))}
+        {screen === 'game' && gameQuestions.length > 0 && (() => {
+          const isInputDisabled = answerSubmitted || isSpectator || (isBuzzed && buzzedUser !== user?.username);
+          return (
+            <div style={styles.screenContainer}>
+              <div style={styles.hudBar}>
+                <div style={styles.hudTeamPanel}>
+                  <span style={styles.hudTeamName}>{user?.username}</span>
+                  <span style={styles.hudTeamScore}>{score} pts</span>
+                  {gameMode === 'SURVIVAL' && (
+                    <div style={styles.heartsRow}>
+                      {Array.from({ length: 3 }).map((_, i) => (
+                        <span key={i} style={{ opacity: i < lives ? 1 : 0.2 }}>❤️</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div style={styles.hudTimerPanel}>
+                  <div style={{
+                    ...styles.timerCircularRing,
+                    borderColor: timeLeft <= 5 ? '#ff3b5c' : '#00f2fe',
+                    animation: timeLeft <= 5 ? 'pulse-glow 0.5s infinite' : 'none'
+                  }}>
+                    {timeLeft}
+                  </div>
+                  <span style={styles.hudRoundCounter}>{t.round} {currentQIndex + 1}/{gameQuestions.length}</span>
+                </div>
+
+                <div style={styles.hudTeamPanel}>
+                  <span style={styles.hudTeamName} className="text-glow-accent">{t.opponent}</span>
+                  <span style={styles.hudTeamScore}>{opponentScore} pts</span>
+                </div>
+              </div>
+
+              <div style={styles.questionZone}>
+                <div style={styles.qHeaderRow}>
+                  <span style={styles.categoryBadge}>{gameQuestions[currentQIndex].category}</span>
+                  <span style={styles.difficultyBadge}>{gameQuestions[currentQIndex].difficulty}</span>
+                </div>
+                
+                <div style={styles.qTextBody}>
+                  {gameQuestions[currentQIndex].body}
+                </div>
+
+                {/* Buzzer Alert */}
+                {isBuzzed && buzzedUser && (
+                  <div style={{
+                    ...styles.buzzedAlertBadge,
+                    borderColor: buzzedUser === user?.username ? '#00ff87' : '#ff3b5c',
+                    backgroundColor: buzzedUser === user?.username ? 'rgba(0, 255, 135, 0.08)' : 'rgba(255, 59, 92, 0.08)'
+                  }}>
+                    🚨 {buzzedUser} buzzed in!
+                  </div>
+                )}
+
+                {gameQuestions[currentQIndex].imageUrl && (
+                  <div style={styles.questionImageFrame}>
+                    <img src={gameQuestions[currentQIndex].imageUrl} alt="Question Graphic" style={styles.questionImage} />
                   </div>
                 )}
               </div>
 
-              <div style={styles.hudTimerPanel}>
-                <div style={{
-                  ...styles.timerCircularRing,
-                  borderColor: timeLeft <= 5 ? '#ff3b5c' : '#00f2fe',
-                  animation: timeLeft <= 5 ? 'pulse-glow 0.5s infinite' : 'none'
-                }}>
-                  {timeLeft}
-                </div>
-                <span style={styles.hudRoundCounter}>{t.round} {currentQIndex + 1}/{gameQuestions.length}</span>
-              </div>
-
-              <div style={styles.hudTeamPanel}>
-                <span style={styles.hudTeamName} className="text-glow-accent">{t.opponent}</span>
-                <span style={styles.hudTeamScore}>{opponentScore} pts</span>
-              </div>
-            </div>
-
-            <div style={styles.questionZone}>
-              <div style={styles.qHeaderRow}>
-                <span style={styles.categoryBadge}>{gameQuestions[currentQIndex].category}</span>
-                <span style={styles.difficultyBadge}>{gameQuestions[currentQIndex].difficulty}</span>
-              </div>
-              
-              <div style={styles.qTextBody}>
-                {gameQuestions[currentQIndex].body}
-              </div>
-
-              {gameQuestions[currentQIndex].imageUrl && (
-                <div style={styles.questionImageFrame}>
-                  <img src={gameQuestions[currentQIndex].imageUrl} alt="Question Graphic" style={styles.questionImage} />
-                </div>
-              )}
-            </div>
-
-            <div style={styles.answerZone}>
-              
-              {(gameQuestions[currentQIndex].type === 'MULTIPLE_CHOICE' ||
-                gameQuestions[currentQIndex].type === 'CIRCUIT_QUESTION' ||
-                gameQuestions[currentQIndex].type === 'IMAGE_QUESTION') && (
-                <div style={styles.mcqGrid}>
-                  {gameQuestions[currentQIndex].options?.map((opt) => (
-                    <button
-                      key={opt.id}
-                      disabled={answerSubmitted}
-                      onClick={() => { playSFX('click'); setSelectedOption(opt.id); }}
-                      style={{
-                        ...styles.answerCardBtn,
-                        borderColor: selectedOption === opt.id ? '#00f2fe' : 'rgba(255, 255, 255, 0.08)',
-                        backgroundColor: selectedOption === opt.id ? 'rgba(0, 242, 254, 0.08)' : 'rgba(17, 19, 31, 0.65)'
-                      }}
-                    >
-                      <span style={styles.optLetterBadge}>{opt.id.toUpperCase()}</span>
-                      <span style={styles.optText}>{opt.text}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {gameQuestions[currentQIndex].type === 'TRUE_FALSE' && (
-                <div style={styles.tfStack}>
-                  <button
-                    disabled={answerSubmitted}
-                    onClick={() => { playSFX('click'); setSelectedOption('true'); }}
-                    style={{
-                      ...styles.tfCardBtn,
-                      borderColor: selectedOption === 'true' ? '#00ff87' : 'rgba(255, 255, 255, 0.08)',
-                      backgroundColor: selectedOption === 'true' ? 'rgba(0, 255, 135, 0.08)' : 'rgba(17, 19, 31, 0.65)'
-                    }}
-                  >
-                    ✓ TRUE / صحيح
-                  </button>
-                  <button
-                    disabled={answerSubmitted}
-                    onClick={() => { playSFX('click'); setSelectedOption('false'); }}
-                    style={{
-                      ...styles.tfCardBtn,
-                      borderColor: selectedOption === 'false' ? '#ff3b5c' : 'rgba(255, 255, 255, 0.08)',
-                      backgroundColor: selectedOption === 'false' ? 'rgba(255, 59, 92, 0.08)' : 'rgba(17, 19, 31, 0.65)'
-                    }}
-                  >
-                    ✕ FALSE / خطأ
-                  </button>
-                </div>
-              )}
-
-              {(gameQuestions[currentQIndex].type === 'FILL_IN_THE_BLANK' ||
-                gameQuestions[currentQIndex].type === 'CALCULATION_QUESTION') && (
-                <div style={styles.blankInputWrapper}>
-                  <input
-                    style={styles.blankInputField}
-                    type="text"
-                    disabled={answerSubmitted}
-                    placeholder="Type answer here..."
-                    value={textAnswer}
-                    onChange={(e) => setTextAnswer(e.target.value)}
-                  />
-                </div>
-              )}
-
-              {gameQuestions[currentQIndex].type === 'ORDERING_QUESTION' && (
-                <div style={styles.orderingContainer}>
-                  {orderIds.map((id, index) => {
-                    const opt = gameQuestions[currentQIndex].options?.find(o => o.id === id);
-                    return (
-                      <div key={id} style={styles.orderingCard}>
-                        <span style={styles.orderLabelBadge}>{index + 1}</span>
-                        <span style={styles.orderingText}>{opt?.text}</span>
-                        <div style={styles.orderControls}>
-                          <button 
-                            disabled={answerSubmitted || index === 0} 
-                            onClick={() => moveOrderItem(index, 'up')}
-                            style={styles.orderArrowBtn}
-                          >
-                            ▲
-                          </button>
-                          <button 
-                            disabled={answerSubmitted || index === orderIds.length - 1} 
-                            onClick={() => moveOrderItem(index, 'down')}
-                            style={styles.orderArrowBtn}
-                          >
-                            ▼
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {gameQuestions[currentQIndex].type === 'MATCHING_QUESTION' && (
-                <div style={styles.matchingPanel}>
-                  <div style={styles.matchingDesc}>{t.matchingInstructions}</div>
-                  <div style={styles.matchingColumns}>
-                    <div style={styles.matchingCol}>
-                      {gameQuestions[currentQIndex].matchingPairs?.map(pair => (
-                        <button
-                          key={pair.leftId}
-                          disabled={answerSubmitted}
-                          onClick={() => handleMatchingClick(pair.leftId, 'left')}
-                          style={{
-                            ...styles.matchCardBtn,
-                            borderColor: activeLeftTerm === pair.leftId ? '#00f2fe' : matchingSelections[pair.leftId] ? '#00ff87' : 'rgba(255, 255, 255, 0.08)',
-                            backgroundColor: matchingSelections[pair.leftId] ? 'rgba(0, 255, 135, 0.04)' : 'transparent'
-                          }}
-                        >
-                          {pair.leftText}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div style={styles.matchingCol}>
-                      {gameQuestions[currentQIndex].matchingPairs?.map(pair => {
-                        const isConnected = Object.values(matchingSelections).includes(pair.rightId);
-                        const leftConnectedId = Object.keys(matchingSelections).find(key => matchingSelections[key] === pair.rightId);
-                        const leftText = leftConnectedId ? gameQuestions[currentQIndex].matchingPairs?.find(p => p.leftId === leftConnectedId)?.leftText.split('/')[0] : '';
-                        
-                        return (
-                          <button
-                            key={pair.rightId}
-                            disabled={answerSubmitted}
-                            onClick={() => handleMatchingClick(pair.rightId, 'right')}
-                            style={{
-                              ...styles.matchCardBtn,
-                              borderColor: isConnected ? '#00ff87' : 'rgba(255, 255, 255, 0.08)',
-                              backgroundColor: isConnected ? 'rgba(0, 255, 135, 0.04)' : 'transparent'
-                            }}
-                          >
-                            <div>{pair.rightText}</div>
-                            {isConnected && (
-                              <div style={styles.connectedMatchLabel}>
-                                {t.matchedPair}: {leftText}
-                              </div>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  {!answerSubmitted && (
-                    <button style={styles.resetMatchBtn} onClick={() => setMatchingSelections({})}>
-                      {t.resetMatches}
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {gameQuestions[currentQIndex].type === 'MULTI_SELECT' && (
-                <div style={styles.mcqGrid}>
-                  {gameQuestions[currentQIndex].options?.map((opt) => {
-                    const isSelected = (selectedOption || []).includes(opt.id);
-                    return (
+              <div style={styles.answerZone}>
+                
+                {(gameQuestions[currentQIndex].type === 'MULTIPLE_CHOICE' ||
+                  gameQuestions[currentQIndex].type === 'CIRCUIT_QUESTION' ||
+                  gameQuestions[currentQIndex].type === 'IMAGE_QUESTION') && (
+                  <div style={styles.mcqGrid}>
+                    {gameQuestions[currentQIndex].options?.map((opt) => (
                       <button
                         key={opt.id}
-                        disabled={answerSubmitted}
-                        onClick={() => toggleMultiSelect(opt.id)}
+                        disabled={isInputDisabled}
+                        onClick={() => { playSFX('click'); setSelectedOption(opt.id); }}
                         style={{
                           ...styles.answerCardBtn,
-                          borderColor: isSelected ? '#00f2fe' : 'rgba(255, 255, 255, 0.08)',
-                          backgroundColor: isSelected ? 'rgba(0, 242, 254, 0.08)' : 'rgba(17, 19, 31, 0.65)'
+                          borderColor: selectedOption === opt.id ? '#00f2fe' : 'rgba(255, 255, 255, 0.08)',
+                          backgroundColor: selectedOption === opt.id ? 'rgba(0, 242, 254, 0.08)' : 'rgba(17, 19, 31, 0.65)'
                         }}
                       >
-                        <span style={styles.optLetterBadge}>
-                          {isSelected ? '✓' : opt.id.toUpperCase()}
-                        </span>
+                        <span style={styles.optLetterBadge}>{opt.id.toUpperCase()}</span>
                         <span style={styles.optText}>{opt.text}</span>
                       </button>
-                    );
-                  })}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
 
-              {gameQuestions[currentQIndex].type === 'CODING_QUESTION' && (
-                <div style={styles.codingWorkspace}>
-                  <textarea
-                    style={styles.codeTextarea}
-                    disabled={answerSubmitted}
-                    value={textAnswer}
-                    placeholder={`function sum(a, b) {\n  // write code here\n}`}
-                    onChange={(e) => setTextAnswer(e.target.value)}
-                  />
-                </div>
-              )}
-            </div>
-
-            {answerSubmitted && (
-              <div style={{
-                ...styles.feedbackPanel,
-                borderColor: isAnswerCorrect ? '#00ff87' : '#ff3b5c',
-                backgroundColor: isAnswerCorrect ? 'rgba(0, 255, 135, 0.05)' : 'rgba(255, 59, 92, 0.05)'
-              }}>
-                <div style={{
-                  ...styles.feedbackTitle,
-                  color: isAnswerCorrect ? '#00ff87' : '#ff3b5c'
-                }}>
-                  {isAnswerCorrect ? t.correctText : t.wrongText}
-                </div>
-                <div style={styles.explanationText}>
-                  <strong>{t.explanation}:</strong> {gameQuestions[currentQIndex].explanation}
-                </div>
-              </div>
-            )}
-
-            <div style={styles.gameActionBar}>
-              <div style={styles.powerUpInventoryBox}>
-                <span style={styles.inventoryTitle}>{t.powerups}</span>
-                <div style={styles.powerupList}>
-                  {inventoryPowerUps.map((p) => (
+                {gameQuestions[currentQIndex].type === 'TRUE_FALSE' && (
+                  <div style={styles.tfStack}>
                     <button
-                      key={p}
-                      disabled={answerSubmitted}
-                      onClick={() => activatePowerUp(p)}
+                      disabled={isInputDisabled}
+                      onClick={() => { playSFX('click'); setSelectedOption('true'); }}
                       style={{
-                        ...styles.powerUpChipBtn,
-                        backgroundColor: activePowerUps.includes(p) ? '#00f2fe' : 'rgba(255, 255, 255, 0.04)',
-                        color: activePowerUps.includes(p) ? '#05060f' : '#f0f4ff',
-                        borderColor: activePowerUps.includes(p) ? '#00f2fe' : 'rgba(255, 255, 255, 0.08)'
+                        ...styles.tfCardBtn,
+                        borderColor: selectedOption === 'true' ? '#00ff87' : 'rgba(255, 255, 255, 0.08)',
+                        backgroundColor: selectedOption === 'true' ? 'rgba(0, 255, 135, 0.08)' : 'rgba(17, 19, 31, 0.65)'
                       }}
                     >
-                      {p === 'JOKER' && '⚡ Joker'}
-                      {p === 'FREEZE' && '❄ Freeze'}
-                      {p === 'SHIELD' && '🛡 Shield'}
+                      ✓ TRUE / صحيح
                     </button>
-                  ))}
-                </div>
+                    <button
+                      disabled={isInputDisabled}
+                      onClick={() => { playSFX('click'); setSelectedOption('false'); }}
+                      style={{
+                        ...styles.tfCardBtn,
+                        borderColor: selectedOption === 'false' ? '#ff3b5c' : 'rgba(255, 255, 255, 0.08)',
+                        backgroundColor: selectedOption === 'false' ? 'rgba(255, 59, 92, 0.08)' : 'rgba(17, 19, 31, 0.65)'
+                      }}
+                    >
+                      ✕ FALSE / خطأ
+                    </button>
+                  </div>
+                )}
+
+                {(gameQuestions[currentQIndex].type === 'FILL_IN_THE_BLANK' ||
+                  gameQuestions[currentQIndex].type === 'CALCULATION_QUESTION') && (
+                  <div style={styles.blankInputWrapper}>
+                    <input
+                      style={styles.blankInputField}
+                      type="text"
+                      disabled={isInputDisabled}
+                      placeholder="Type answer here..."
+                      value={textAnswer}
+                      onChange={(e) => setTextAnswer(e.target.value)}
+                    />
+                  </div>
+                )}
+
+                {gameQuestions[currentQIndex].type === 'ORDERING_QUESTION' && (
+                  <div style={styles.orderingContainer}>
+                    {orderIds.map((id, index) => {
+                      const opt = gameQuestions[currentQIndex].options?.find(o => o.id === id);
+                      return (
+                        <div key={id} style={styles.orderingCard}>
+                          <span style={styles.orderLabelBadge}>{index + 1}</span>
+                          <span style={styles.orderingText}>{opt?.text}</span>
+                          <div style={styles.orderControls}>
+                            <button 
+                              disabled={isInputDisabled || index === 0} 
+                              onClick={() => moveOrderItem(index, 'up')}
+                              style={styles.orderArrowBtn}
+                            >
+                              ▲
+                            </button>
+                            <button 
+                              disabled={isInputDisabled || index === orderIds.length - 1} 
+                              onClick={() => moveOrderItem(index, 'down')}
+                              style={styles.orderArrowBtn}
+                            >
+                              ▼
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {gameQuestions[currentQIndex].type === 'MATCHING_QUESTION' && (
+                  <div style={styles.matchingPanel}>
+                    <div style={styles.matchingDesc}>{t.matchingInstructions}</div>
+                    <div style={styles.matchingColumns}>
+                      <div style={styles.matchingCol}>
+                        {gameQuestions[currentQIndex].matchingPairs?.map(pair => (
+                          <button
+                            key={pair.leftId}
+                            disabled={isInputDisabled}
+                            onClick={() => handleMatchingClick(pair.leftId, 'left')}
+                            style={{
+                              ...styles.matchCardBtn,
+                              borderColor: activeLeftTerm === pair.leftId ? '#00f2fe' : matchingSelections[pair.leftId] ? '#00ff87' : 'rgba(255, 255, 255, 0.08)',
+                              backgroundColor: matchingSelections[pair.leftId] ? 'rgba(0, 255, 135, 0.04)' : 'transparent'
+                            }}
+                          >
+                            {pair.leftText}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div style={styles.matchingCol}>
+                        {gameQuestions[currentQIndex].matchingPairs?.map(pair => {
+                          const isConnected = Object.values(matchingSelections).includes(pair.rightId);
+                          const leftConnectedId = Object.keys(matchingSelections).find(key => matchingSelections[key] === pair.rightId);
+                          const leftText = leftConnectedId ? gameQuestions[currentQIndex].matchingPairs?.find(p => p.leftId === leftConnectedId)?.leftText.split('/')[0] : '';
+                          
+                          return (
+                            <button
+                              key={pair.rightId}
+                              disabled={isInputDisabled}
+                              onClick={() => handleMatchingClick(pair.rightId, 'right')}
+                              style={{
+                                ...styles.matchCardBtn,
+                                borderColor: isConnected ? '#00ff87' : 'rgba(255, 255, 255, 0.08)',
+                                backgroundColor: isConnected ? 'rgba(0, 255, 135, 0.04)' : 'transparent'
+                              }}
+                            >
+                              <div>{pair.rightText}</div>
+                              {isConnected && (
+                                <div style={styles.connectedMatchLabel}>
+                                  {t.matchedPair}: {leftText}
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    {!isInputDisabled && (
+                      <button style={styles.resetMatchBtn} onClick={() => setMatchingSelections({})}>
+                        {t.resetMatches}
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {gameQuestions[currentQIndex].type === 'MULTI_SELECT' && (
+                  <div style={styles.mcqGrid}>
+                    {gameQuestions[currentQIndex].options?.map((opt) => {
+                      const isSelected = (selectedOption || []).includes(opt.id);
+                      return (
+                        <button
+                          key={opt.id}
+                          disabled={isInputDisabled}
+                          onClick={() => toggleMultiSelect(opt.id)}
+                          style={{
+                            ...styles.answerCardBtn,
+                            borderColor: isSelected ? '#00f2fe' : 'rgba(255, 255, 255, 0.08)',
+                            backgroundColor: isSelected ? 'rgba(0, 242, 254, 0.08)' : 'rgba(17, 19, 31, 0.65)'
+                          }}
+                        >
+                          <span style={styles.optLetterBadge}>
+                            {isSelected ? '✓' : opt.id.toUpperCase()}
+                          </span>
+                          <span style={styles.optText}>{opt.text}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {gameQuestions[currentQIndex].type === 'CODING_QUESTION' && (
+                  <div style={styles.codingWorkspace}>
+                    <textarea
+                      style={styles.codeTextarea}
+                      disabled={isInputDisabled}
+                      value={textAnswer}
+                      placeholder={`function sum(a, b) {\n  // write code here\n}`}
+                      onChange={(e) => setTextAnswer(e.target.value)}
+                    />
+                  </div>
+                )}
               </div>
 
-              {buzzerActive && !isBuzzed && !answerSubmitted && (
-                <button style={styles.buzzerCircBtn} onClick={handleBuzz}>
-                  {t.buzzBtn}
-                </button>
-              )}
-
-              {(!buzzerActive || isBuzzed) && !answerSubmitted && (
-                <button style={styles.submitAnsBtn} onClick={submitAnswer}>
-                  {t.submitBtn}
-                </button>
-              )}
-
               {answerSubmitted && (
-                <button style={styles.nextQBtn} onClick={nextQuestion}>
-                  {t.nextBtn}
-                </button>
+                <div style={{
+                  ...styles.feedbackPanel,
+                  borderColor: isAnswerCorrect ? '#00ff87' : '#ff3b5c',
+                  backgroundColor: isAnswerCorrect ? 'rgba(0, 255, 135, 0.05)' : 'rgba(255, 59, 92, 0.05)'
+                }}>
+                  <div style={{
+                    ...styles.feedbackTitle,
+                    color: isAnswerCorrect ? '#00ff87' : '#ff3b5c'
+                  }}>
+                    {isAnswerCorrect ? t.correctText : t.wrongText}
+                  </div>
+                  {revealedCorrectAnswer && (
+                    <div style={{ fontSize: '0.8rem', color: '#ffffff', margin: '4px 0' }}>
+                      <strong>{isRtl ? 'الإجابة الصحيحة:' : 'Correct Answer:'}</strong> {JSON.stringify(revealedCorrectAnswer)}
+                    </div>
+                  )}
+                  <div style={styles.explanationText}>
+                    <strong>{t.explanation}:</strong> {gameQuestions[currentQIndex].explanation}
+                  </div>
+                </div>
               )}
+
+              <div style={styles.gameActionBar}>
+                {isSpectator ? (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    height: '100%',
+                    padding: '10px',
+                    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.05)',
+                    borderRadius: '8px',
+                    color: '#8a93c0',
+                    fontSize: '0.95rem',
+                    fontWeight: 700,
+                    letterSpacing: '1px',
+                    textAlign: 'center',
+                    animation: 'pulse-glow 2s infinite'
+                  }}>
+                    👁️ {isRtl ? 'وضع المتفرج · شاشة عرض فقط' : 'SPECTATOR MODE · READ ONLY'}
+                  </div>
+                ) : (
+                  <>
+                    <div style={styles.powerUpInventoryBox}>
+                      <span style={styles.inventoryTitle}>{t.powerups}</span>
+                      <div style={styles.powerupList}>
+                        {inventoryPowerUps.map((p) => (
+                          <button
+                            key={p}
+                            disabled={answerSubmitted}
+                            onClick={() => activatePowerUp(p)}
+                            style={{
+                              ...styles.powerUpChipBtn,
+                              backgroundColor: activePowerUps.includes(p) ? '#00f2fe' : 'rgba(255, 255, 255, 0.04)',
+                              color: activePowerUps.includes(p) ? '#05060f' : '#f0f4ff',
+                              borderColor: activePowerUps.includes(p) ? '#00f2fe' : 'rgba(255, 255, 255, 0.08)'
+                            }}
+                          >
+                            {p === 'JOKER' && '⚡ Joker'}
+                            {p === 'FREEZE' && '❄ Freeze'}
+                            {p === 'SHIELD' && '🛡 Shield'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {buzzerActive && !isBuzzed && !answerSubmitted && (
+                      <button style={styles.buzzerCircBtn} onClick={handleBuzz}>
+                        {t.buzzBtn}
+                      </button>
+                    )}
+
+                    {/* Answering State */}
+                    {(!buzzerActive || (isBuzzed && buzzedUser === user?.username)) && !answerSubmitted && (
+                      <button style={styles.submitAnsBtn} onClick={submitAnswer}>
+                        {t.submitBtn}
+                      </button>
+                    )}
+
+                    {/* Waiting state for buzzer matches */}
+                    {isBuzzed && buzzedUser !== user?.username && !answerSubmitted && (
+                      <div style={styles.waitingForPlayerMessage}>
+                        {isRtl ? 'بانتظار إجابة الخصم...' : 'Waiting for opponent to answer...'}
+                      </div>
+                    )}
+
+                    {answerSubmitted && !currentRoom && (
+                      <button style={styles.nextQBtn} onClick={nextQuestion}>
+                        {t.nextBtn}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* SCREEN: GAME SUMMARY */}
         {screen === 'summary' && (
@@ -2095,7 +2574,8 @@ const styles: { [key: string]: React.CSSProperties } = {
     flexDirection: 'column',
     gap: '8px',
     minHeight: '130px',
-    justifyContent: 'center'
+    justifyContent: 'center',
+    position: 'relative'
   },
   qHeaderRow: {
     display: 'flex',
@@ -2124,6 +2604,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#f0f4ff',
     lineHeight: '1.4',
     whiteSpace: 'pre-line'
+  },
+  buzzedAlertBadge: {
+    padding: '6px 12px',
+    border: '1px solid',
+    borderRadius: '6px',
+    color: '#ffffff',
+    fontSize: '0.8rem',
+    fontWeight: 700,
+    textAlign: 'center',
+    marginTop: '6px',
+    animation: 'pulse-glow 0.8s infinite'
   },
   questionImageFrame: {
     width: '100%',
@@ -2418,6 +2909,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontWeight: 800,
     cursor: 'pointer',
     outline: 'none'
+  },
+  waitingForPlayerMessage: {
+    fontSize: '0.9rem',
+    color: '#ffb300',
+    fontWeight: 600,
+    textAlign: 'center',
+    height: '46px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    animation: 'pulse-glow 1s infinite'
   },
   summaryBadgeWrapper: {
     fontSize: '4.5rem',
