@@ -1,6 +1,6 @@
 {
   "framework": "nextjs",
   "installCommand": "npm install",
-  "buildCommand": "npm run build:shared && npm run build:web",
+  "buildCommand": "npm run build --prefix packages/shared && cd apps/web && cross-env NODE_ENV=production next build",
   "outputDirectory": "apps/web/.next"
 }
