@@ -204,3 +204,162 @@ a {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--primary);
 }
+
+/* Premium Victory & Defeat Animations & Elements */
+@keyframes victoryPulse {
+  0% { box-shadow: 0 0 20px rgba(0, 230, 118, 0.2), inset 0 0 10px rgba(0, 242, 254, 0.1); }
+  50% { box-shadow: 0 0 45px rgba(0, 230, 118, 0.6), inset 0 0 20px rgba(0, 242, 254, 0.35); }
+  100% { box-shadow: 0 0 20px rgba(0, 230, 118, 0.2), inset 0 0 10px rgba(0, 242, 254, 0.1); }
+}
+
+@keyframes defeatPulse {
+  0% { box-shadow: 0 0 20px rgba(255, 23, 68, 0.2), inset 0 0 10px rgba(243, 85, 136, 0.1); }
+  50% { box-shadow: 0 0 45px rgba(255, 23, 68, 0.6), inset 0 0 20px rgba(243, 85, 136, 0.35); }
+  100% { box-shadow: 0 0 20px rgba(255, 23, 68, 0.2), inset 0 0 10px rgba(243, 85, 136, 0.1); }
+}
+
+@keyframes rayRotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.victory-banner {
+  background: linear-gradient(135deg, rgba(0, 230, 118, 0.15) 0%, rgba(0, 242, 254, 0.15) 100%);
+  border: 2px solid #00e676;
+  animation: victoryPulse 3s infinite ease-in-out;
+}
+
+.defeat-banner {
+  background: linear-gradient(135deg, rgba(255, 23, 68, 0.15) 0%, rgba(243, 85, 136, 0.15) 100%);
+  border: 2px solid #ff1744;
+  animation: defeatPulse 3s infinite ease-in-out;
+}
+
+/* Glassmorphism Standings and Breakdown Tables */
+.glass-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 8px;
+  margin-top: 10px;
+}
+
+.glass-table th {
+  padding: 12px 16px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-align: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+body[dir="rtl"] .glass-table th,
+body[dir="rtl"] .glass-table td {
+  text-align: right;
+}
+
+.glass-table-row {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  transition: var(--transition-smooth);
+}
+
+.glass-table-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+  transform: scale(1.01);
+}
+
+.glass-table-row.self {
+  background: rgba(0, 242, 254, 0.06);
+  border: 1px solid rgba(0, 242, 254, 0.25);
+  box-shadow: 0 0 15px rgba(0, 242, 254, 0.1);
+}
+
+.glass-table td {
+  padding: 14px 16px;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  text-align: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.glass-table td:first-child {
+  border-left: 1px solid rgba(255, 255, 255, 0.04);
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+}
+
+.glass-table td:last-child {
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
+  border-top-right-radius: 8px;
+  border-bottom-right-radius: 8px;
+}
+
+/* RTL cell adjustments */
+body[dir="rtl"] .glass-table td:first-child {
+  border-left: none;
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
+  border-top-right-radius: 8px;
+  border-bottom-right-radius: 8px;
+}
+
+body[dir="rtl"] .glass-table td:last-child {
+  border-right: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.04);
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  gap: 4px;
+}
+
+.status-badge.correct {
+  background: rgba(0, 230, 118, 0.15);
+  color: #00e676;
+  border: 1px solid rgba(0, 230, 118, 0.3);
+}
+
+.status-badge.incorrect {
+  background: rgba(255, 23, 68, 0.15);
+  color: #ff1744;
+  border: 1px solid rgba(255, 23, 68, 0.3);
+}
+
+.status-badge.no-answer {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Accordion details */
+.accordion-trigger {
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.accordion-trigger:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.avatar-container {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #1e2236;
+  font-weight: 700;
+  color: #ffffff;
+  border: 2px solid transparent;
+}
+

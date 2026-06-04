@@ -263,8 +263,81 @@ export default function ClientPage() {
   const [selectedMaxPlayers, setSelectedMaxPlayers] = useState<number>(6);
   const [isSpectatorJoin, setIsSpectatorJoin] = useState<boolean>(false);
   const [roomCodeInput, setRoomCodeInput] = useState('');
-  const [currentRoom, setCurrentRoom] = useState<any>(null);
-  const [participants, setParticipants] = useState<any[]>([]);
+  const [currentRoom, setCurrentRoom] = useState<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
+  interface PlayerParticipant {
+    userId: string;
+    username: string;
+    avatarUrl: string | null;
+    rank: string;
+    score: number;
+    isHost: boolean;
+    isReady: boolean;
+    teamId: string | null;
+    isSpectator: boolean;
+  }
+
+  interface ReportParticipant extends PlayerParticipant {
+    accuracy: number;
+    correctCount: number;
+    totalAnswered: number;
+  }
+
+  const [participants, setParticipants] = useState<PlayerParticipant[]>([]);
+  
+  interface SoloHistoryItem {
+    roundNumber: number;
+    questionText: string;
+    questionType: string;
+    isCorrect: boolean;
+    userAnswer: unknown;
+    correctAnswer: unknown;
+    explanation: string;
+    timeSpent: number;
+  }
+
+  interface MatchReportData {
+    players: ReportParticipant[];
+    rounds: {
+      roundNumber: number;
+      questionBody: string;
+      questionType: string;
+      answers: {
+        userId: string;
+        username: string;
+        isCorrect: boolean;
+        timeSpentMs: number;
+        pointsEarned: number;
+      }[];
+    }[];
+    isMultiplayer: boolean;
+  }
+
+  interface DbRound {
+    id: string;
+    round_number: number;
+    question_id: string;
+    questions: {
+      id: string;
+      body: string;
+      type: string;
+      correct_answer: unknown;
+    } | null;
+  }
+
+  interface DbAnswer {
+    round_id: string;
+    user_id: string;
+    answer: unknown;
+    time_spent_ms: number;
+    is_correct: boolean;
+    points_earned: number;
+  }
+
+  // Enhanced summary screen states
+  const [soloHistory, setSoloHistory] = useState<SoloHistoryItem[]>([]);
+  const [matchReportDetails, setMatchReportDetails] = useState<MatchReportData | null>(null);
+  const [loadingReportDetails, setLoadingReportDetails] = useState<boolean>(false);
+  const [expandedRound, setExpandedRound] = useState<number | null>(null);
   
   // Game Play States
   const [gameMode, setGameMode] = useState<GameModeType>('PRACTICE');
@@ -302,7 +375,7 @@ export default function ClientPage() {
   const setupGameSyncCallbacks = (sync: GameSyncService) => {
     sync.setCallbacks({
       onParticipantsUpdate: (list) => {
-        setParticipants(list);
+        setParticipants(list as unknown as PlayerParticipant[]);
       },
       onConfigUpdate: (config) => {
         setCurrentRoom((prev: any) => prev ? { ...prev, config } : null);
@@ -392,6 +465,24 @@ export default function ClientPage() {
     playSFX('wrong');
     setIsAnswerCorrect(false);
     setAnswerSubmitted(true);
+
+    const q = gameQuestions[currentQIndex];
+    if (q) {
+      setSoloHistory(prev => [
+        ...prev,
+        {
+          roundNumber: currentQIndex + 1,
+          questionText: q.body,
+          questionType: q.type,
+          isCorrect: false,
+          userAnswer: null,
+          correctAnswer: q.correctAnswer || q.orderingItems || q.matchingPairs,
+          explanation: q.explanation || '',
+          timeSpent: 30
+        }
+      ]);
+    }
+
     if (gameMode === 'SURVIVAL') {
       setLives((prev) => {
         const nextL = prev - 1;
@@ -472,14 +563,26 @@ export default function ClientPage() {
     if (currentRoom && gameSyncRef.current && activeRoundRef.current) {
       setAnswerSubmitted(true);
       const elapsedMs = Date.now() - activeRoundRef.current.started_at;
+      
+      let finalAns = userAns;
+      if (q.type === 'CODING_QUESTION') {
+        const isCorrect = evaluateLocalAnswer(q, userAns);
+        finalAns = {
+          clientGraded: 'true',
+          isCorrect: isCorrect,
+          code: userAns
+        };
+      }
+      
       await gameSyncRef.current.submitAnswer(
         activeRoundRef.current.id,
-        userAns,
+        finalAns,
         elapsedMs,
         activePowerUps
       );
       return;
     }
+
 
     try {
       const isCorrect = evaluateLocalAnswer(q, userAns);
@@ -516,12 +619,40 @@ export default function ClientPage() {
         }, 800);
       }
 
+      setSoloHistory(prev => [
+        ...prev,
+        {
+          roundNumber: currentQIndex + 1,
+          questionText: q.body,
+          questionType: q.type,
+          isCorrect,
+          userAnswer: userAns,
+          correctAnswer: q.correctAnswer || q.orderingItems || q.matchingPairs,
+          explanation: q.explanation || '',
+          timeSpent: 30 - timeLeft
+        }
+      ]);
+
     } catch (e) {
       console.error(e);
       const isCorrect = evaluateLocalAnswer(q, userAns);
       setIsAnswerCorrect(isCorrect);
       setAnswerSubmitted(true);
       if (isCorrect) playSFX('correct'); else playSFX('wrong');
+
+      setSoloHistory(prev => [
+        ...prev,
+        {
+          roundNumber: currentQIndex + 1,
+          questionText: q.body,
+          questionType: q.type,
+          isCorrect,
+          userAnswer: userAns,
+          correctAnswer: q.correctAnswer || q.orderingItems || q.matchingPairs,
+          explanation: q.explanation || '',
+          timeSpent: 30 - timeLeft
+        }
+      ]);
     }
   }
 
@@ -996,6 +1127,7 @@ export default function ClientPage() {
     setLives(3);
     setCorrectAnswersCount(0);
     setAnswerSubmitted(false);
+    setSoloHistory([]);
 
     let questionsToLoad = SAMPLE_QUESTIONS;
     try {
@@ -1037,6 +1169,178 @@ export default function ClientPage() {
     setGameQuestions(questionsToLoad);
     setScreen('cinematic');
   };
+
+  function prepareSoloMatchDetails() {
+    const totalAnswered = gameQuestions.length;
+    const accuracy = totalAnswered > 0 ? Math.round((correctAnswersCount / totalAnswered) * 100) : 0;
+
+    const playerDetail: ReportParticipant = {
+      userId: user?.id || 'solo_player',
+      username: user?.username || (isRtl ? 'أنت' : 'You'),
+      avatarUrl: user?.avatarUrl || null,
+      rank: user?.rank || 'Bronze',
+      score: score,
+      isHost: true,
+      isReady: true,
+      teamId: null,
+      isSpectator: false,
+      accuracy,
+      correctCount: correctAnswersCount,
+      totalAnswered
+    };
+
+    setMatchReportDetails({
+      players: [playerDetail],
+      rounds: (soloHistory as SoloHistoryItem[]).map((h) => ({
+        roundNumber: h.roundNumber,
+        questionBody: h.questionText,
+        questionType: h.questionType,
+        answers: [{
+          userId: user?.id || 'solo_player',
+          username: user?.username || (isRtl ? 'أنت' : 'You'),
+          isCorrect: h.isCorrect,
+          timeSpentMs: h.timeSpent * 1000,
+          pointsEarned: h.isCorrect ? 100 : 0
+        }]
+      })),
+      isMultiplayer: false
+    });
+  }
+
+  async function fetchMultiplayerMatchDetails() {
+    if (!currentRoom) return;
+    setLoadingReportDetails(true);
+    try {
+      // 1. Fetch latest match for the room
+      const { data: matches, error: mError } = await supabase
+        .from('matches')
+        .select('id, total_rounds, started_at, ended_at')
+        .eq('room_id', currentRoom.id)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (mError || !matches || matches.length === 0) {
+        console.error("Error fetching match:", mError);
+        setLoadingReportDetails(false);
+        return;
+      }
+
+      const matchId = matches[0].id;
+
+      // 2. Fetch match rounds and questions
+      const { data: rounds, error: rError } = await supabase
+        .from('match_rounds')
+        .select(`
+          id,
+          round_number,
+          question_id,
+          questions (
+            id,
+            body,
+            type,
+            correct_answer
+          )
+        `)
+        .eq('match_id', matchId)
+        .order('round_number', { ascending: true });
+
+      if (rError || !rounds) {
+        console.error("Error fetching rounds:", rError);
+        setLoadingReportDetails(false);
+        return;
+      }
+
+      const typedRounds = rounds as unknown as DbRound[];
+
+      // 3. Fetch round answers for all players
+      const roundIds = typedRounds.map((r) => r.id);
+      const { data: answers, error: aError } = await supabase
+        .from('round_answers')
+        .select(`
+          round_id,
+          user_id,
+          answer,
+          time_spent_ms,
+          is_correct,
+          points_earned
+        `)
+        .in('round_id', roundIds);
+
+      if (aError || !answers) {
+        console.error("Error fetching answers:", aError);
+        setLoadingReportDetails(false);
+        return;
+      }
+
+      const typedAnswers = answers as unknown as DbAnswer[];
+
+      // 4. Group details by player and by round
+      const activePlayers = participants.filter((p) => !p.isSpectator);
+
+      // Compute accuracy rate for each player
+      const playerDetails = activePlayers.map((p) => {
+        const playerAnswers = typedAnswers.filter((a) => a.user_id === p.userId);
+        const correctCount = playerAnswers.filter((a) => a.is_correct).length;
+        const totalAnswered = playerAnswers.length;
+        const accuracy = totalAnswered > 0 ? Math.round((correctCount / totalAnswered) * 100) : 0;
+        
+        return {
+          ...p,
+          accuracy,
+          correctCount,
+          totalAnswered,
+          answers: playerAnswers
+        };
+      });
+
+      // Sort playerDetails by score descending
+      playerDetails.sort((a, b) => b.score - a.score);
+
+      // Create a round-by-round matrix: each round having list of player answers
+      const roundsWithAnswers = typedRounds.map((r) => {
+        const roundAnswers = typedAnswers.filter((a) => a.round_id === r.id);
+        const qInfo = r.questions;
+        return {
+          roundNumber: r.round_number,
+          questionBody: qInfo?.body || 'Question',
+          questionType: qInfo?.type || 'UNKNOWN',
+          answers: roundAnswers.map((ans) => {
+            const player = activePlayers.find((p) => p.userId === ans.user_id);
+            return {
+              userId: ans.user_id,
+              username: player?.username || 'Player',
+              isCorrect: ans.is_correct,
+              timeSpentMs: ans.time_spent_ms,
+              pointsEarned: ans.points_earned
+            };
+          })
+        };
+      });
+
+      setMatchReportDetails({
+        players: playerDetails,
+        rounds: roundsWithAnswers,
+        isMultiplayer: true
+      });
+    } catch (err) {
+      console.error("Exception in fetchMultiplayerMatchDetails:", err);
+    } finally {
+      setLoadingReportDetails(false);
+    }
+  }
+
+  // Fetch report details when summary screen is active
+  useEffect(() => {
+    if (screen === 'summary') {
+      setTimeout(() => {
+        if (currentRoom) {
+          fetchMultiplayerMatchDetails();
+        } else {
+          prepareSoloMatchDetails();
+        }
+      }, 0);
+    }
+  }, [screen, currentRoom]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const enterGameScreen = () => {
     setScreen('game');
@@ -1160,7 +1464,22 @@ export default function ClientPage() {
       opponent: 'Opponent',
       matchingInstructions: 'Tap left term, then right definition to link:',
       matchedPair: 'Matched',
-      resetMatches: 'Reset Connections'
+      resetMatches: 'Reset Connections',
+      victoryTitle: 'Victory',
+      defeatTitle: 'Defeat',
+      standingsTitle: 'Final Standings',
+      detailedReportTitle: 'Match Round Breakdown',
+      loadingReport: 'Loading battle details...',
+      playerHeader: 'Player',
+      rankHeader: 'Rank',
+      scoreHeader: 'Score',
+      accuracyHeader: 'Accuracy',
+      timeHeader: 'Time',
+      pointsHeader: 'Points',
+      correctLabel: 'Correct',
+      incorrectLabel: 'Incorrect',
+      noAnswerLabel: 'No Answer',
+      expandQuestion: 'Click to expand question body & explanation'
     },
     ar: {
       title: 'سباق العقول',
@@ -1207,7 +1526,22 @@ export default function ClientPage() {
       opponent: 'الخصم',
       matchingInstructions: 'اضغط على الكلمة يميناً ثم المعنى المقابل يساراً للتوصيل:',
       matchedPair: 'موصول بـ',
-      resetMatches: 'إعادة تعيين التوصيل'
+      resetMatches: 'إعادة تعيين التوصيل',
+      victoryTitle: 'انتصار ساحق',
+      defeatTitle: 'هزيمة',
+      standingsTitle: 'الترتيب النهائي',
+      detailedReportTitle: 'تفاصيل جولات المواجهة',
+      loadingReport: 'جاري تحميل تفاصيل المعركة...',
+      playerHeader: 'اللاعب',
+      rankHeader: 'المركز',
+      scoreHeader: 'النقاط',
+      accuracyHeader: 'الدقة',
+      timeHeader: 'الوقت',
+      pointsHeader: 'النقاط المستحقة',
+      correctLabel: 'صحيح',
+      incorrectLabel: 'خاطئ',
+      noAnswerLabel: 'لم يجب',
+      expandQuestion: 'اضغط لعرض نص السؤال والشرح'
     }
   };
 
@@ -2246,44 +2580,284 @@ export default function ClientPage() {
         })()}
 
         {/* SCREEN: GAME SUMMARY */}
+        {/* SCREEN: GAME SUMMARY */}
         {screen === 'summary' && (
           <div style={styles.screenContainer}>
-            <div style={styles.summaryBadgeWrapper}>
-              🏆
-            </div>
-            
-            <h1 style={styles.glowTitle} className="text-glow">{t.summaryTitle}</h1>
-            
-            <div style={styles.summaryStatsGrid}>
-              <div style={styles.statCard}>
-                <span style={styles.statHeading}>{t.score}</span>
-                <span style={styles.statNum} className="text-glow">{score}</span>
-              </div>
-
-              <div style={styles.statCard}>
-                <span style={styles.statHeading}>{t.accuracy}</span>
-                <span style={styles.statNum} className="text-glow-accent">
-                  {gameQuestions.length > 0 ? Math.round((correctAnswersCount / gameQuestions.length) * 100) : 0}%
+            {loadingReportDetails ? (
+              <div style={{ ...styles.statCard, padding: '40px', gap: '16px', justifyContent: 'center' }}>
+                <span className="animate-float" style={{ fontSize: '3rem' }}>⏳</span>
+                <span style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--primary)' }}>
+                  {t.loadingReport}
                 </span>
               </div>
-            </div>
+            ) : matchReportDetails ? (() => {
+              const players = matchReportDetails.players as ReportParticipant[];
+              const rounds = matchReportDetails.rounds as MatchReportData['rounds'];
+              
+              // Determine Victory/Defeat
+              const topScore = players.length > 0 ? players[0].score : 0;
+              const isVictory = !currentRoom 
+                ? (gameQuestions.length > 0 ? (correctAnswersCount / gameQuestions.length) >= 0.5 : true)
+                : (score >= topScore && score > 0);
 
-            <div style={styles.rewardsPanelCard}>
-              <div style={styles.rewardDetailRow}>
-                <span>{t.coinsEarned}</span>
-                <span style={{ color: '#ffb300', fontWeight: 700 }}>+ {Math.floor(score / 10)} 🪙</span>
-              </div>
-              <div style={styles.rewardDetailRow}>
-                <span>{t.xpGained}</span>
-                <span style={{ color: '#00e676', fontWeight: 700 }}>+ 250 XP</span>
-              </div>
-            </div>
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%' }}>
+                  
+                  {/* Victory/Defeat Premium Banner */}
+                  <div 
+                    className={isVictory ? "victory-banner" : "defeat-banner"}
+                    style={{
+                      borderRadius: '16px',
+                      padding: '24px',
+                      textAlign: 'center',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '12px',
+                      boxShadow: isVictory ? '0 0 30px rgba(0, 230, 118, 0.15)' : '0 0 30px rgba(255, 23, 68, 0.15)',
+                      transition: 'var(--transition-smooth)'
+                    }}
+                  >
+                    <span 
+                      className="animate-float" 
+                      style={{ 
+                        fontSize: '4.5rem',
+                        filter: isVictory ? 'drop-shadow(0 0 15px rgba(0,230,118,0.5))' : 'drop-shadow(0 0 15px rgba(255,23,68,0.5))'
+                      }}
+                    >
+                      {isVictory ? '👑' : '💀'}
+                    </span>
+                    <h1 
+                      style={{ 
+                        fontSize: '2.5rem', 
+                        fontWeight: 900, 
+                        letterSpacing: '1px',
+                        textShadow: isVictory ? '0 0 15px rgba(0, 230, 118, 0.6)' : '0 0 15px rgba(255, 23, 68, 0.6)',
+                        color: '#ffffff'
+                      }}
+                    >
+                      {isVictory ? t.victoryTitle : t.defeatTitle}
+                    </h1>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', maxWidth: '320px', lineHeight: 1.5 }}>
+                      {isVictory 
+                        ? (currentRoom ? (isRtl ? 'لقد سيطرت على ساحة المعركة المعرفية وتفوقت على الجميع!' : 'You dominated the cognitive arena and outsmarted everyone!') : (isRtl ? 'أداء رائع! لقد أكملت التحدي بدقة عالية!' : 'Fantastic job! You completed the challenge successfully!'))
+                        : (currentRoom ? (isRtl ? 'الهزيمة ليست النهاية، بل بداية طريق التميز والتعلم!' : 'Defeat is not the end, but the beginning of mastery!') : (isRtl ? 'استمر في التحدي! الممارسة تصنع الفارق دائماً!' : 'Keep practicing! Repetition is the key to mastery!'))
+                      }
+                    </p>
+                  </div>
 
-            <div style={styles.summaryFooter}>
-              <button style={styles.returnHubBtn} onClick={() => { playSFX('click'); setScreen('dashboard'); }}>
-                {t.dashboardBtn}
-              </button>
-            </div>
+                  {/* Personal Summary Stats */}
+                  <div style={styles.summaryStatsGrid}>
+                    <div style={styles.statCard}>
+                      <span style={styles.statHeading}>{t.score}</span>
+                      <span style={styles.statNum} className="text-glow">{score}</span>
+                    </div>
+
+                    <div style={styles.statCard}>
+                      <span style={styles.statHeading}>{t.accuracy}</span>
+                      <span style={styles.statNum} className="text-glow-accent">
+                        {gameQuestions.length > 0 ? Math.round((correctAnswersCount / gameQuestions.length) * 100) : 0}%
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Rewards Panel */}
+                  <div style={styles.rewardsPanelCard}>
+                    <div style={styles.rewardDetailRow}>
+                      <span style={{ color: 'var(--text-secondary)' }}>{t.coinsEarned}</span>
+                      <span style={{ color: '#ffb300', fontWeight: 800 }}>+ {Math.floor(score / 10)} 🪙</span>
+                    </div>
+                    <div style={styles.rewardDetailRow}>
+                      <span style={{ color: 'var(--text-secondary)' }}>{t.xpGained}</span>
+                      <span style={{ color: '#00e676', fontWeight: 800 }}>+ 250 XP</span>
+                    </div>
+                  </div>
+
+                  {/* Standings Table / Scoreboard */}
+                  <div style={{ ...styles.rewardsPanelCard, gap: '16px' }}>
+                    <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--primary)', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '10px' }}>
+                      🏆 {t.standingsTitle}
+                    </h2>
+                    <div style={{ overflowX: 'auto', width: '100%' }}>
+                      <table className="glass-table">
+                        <thead>
+                          <tr>
+                            <th>{t.rankHeader}</th>
+                            <th>{t.playerHeader}</th>
+                            <th>{t.scoreHeader}</th>
+                            <th>{t.accuracyHeader}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {players.map((p, idx) => {
+                            const isSelf = p.userId === user?.id;
+                            const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
+                            return (
+                              <tr key={p.userId} className={isSelf ? "glass-table-row self" : "glass-table-row"}>
+                                <td style={{ fontWeight: 800, fontSize: idx < 3 ? '1.2rem' : '0.9rem' }}>{medal}</td>
+                                <td>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: isRtl ? 'flex-end' : 'flex-start' }}>
+                                    <div className="avatar-container" style={{ border: isSelf ? '2px solid var(--primary)' : '2px solid var(--border-glass)' }}>
+                                      {p.username.substring(0, 2).toUpperCase()}
+                                    </div>
+                                    <span style={{ fontWeight: isSelf ? 800 : 500 }}>
+                                      {p.username}
+                                    </span>
+                                    {isSelf && (
+                                      <span style={{ fontSize: '0.7rem', padding: '2px 6px', background: 'rgba(0, 242, 254, 0.2)', border: '1px solid var(--primary)', borderRadius: '4px', color: 'var(--primary)', fontWeight: 800 }}>
+                                        {isRtl ? 'أنت' : 'YOU'}
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td style={{ fontWeight: 700, color: isSelf ? 'var(--primary)' : '#ffffff' }}>{p.score}</td>
+                                <td style={{ color: 'var(--text-secondary)' }}>{p.accuracy}%</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Round-by-Round Breakdown Matrix */}
+                  <div style={{ ...styles.rewardsPanelCard, gap: '16px' }}>
+                    <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--primary)', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '10px' }}>
+                      📊 {t.detailedReportTitle}
+                    </h2>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {rounds.map((r) => {
+                        const isExpanded = expandedRound === r.roundNumber;
+                        return (
+                          <div 
+                            key={r.roundNumber} 
+                            style={{ 
+                              background: 'rgba(255, 255, 255, 0.01)', 
+                              border: '1px solid rgba(255, 255, 255, 0.04)', 
+                              borderRadius: '8px',
+                              overflow: 'hidden'
+                            }}
+                          >
+                            {/* Accordion Trigger Header */}
+                            <div 
+                              className="accordion-trigger"
+                              style={{ 
+                                padding: '14px 16px', 
+                                display: 'flex', 
+                                justifyContent: 'space-between', 
+                                alignItems: 'center',
+                                gap: '12px',
+                                background: isExpanded ? 'rgba(255, 255, 255, 0.03)' : 'transparent'
+                              }}
+                              onClick={() => setExpandedRound(isExpanded ? null : r.roundNumber)}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <span style={{ fontWeight: 800, color: 'var(--primary)' }}>Q{r.roundNumber}</span>
+                                <span style={{ color: '#ffffff', fontSize: '0.88rem', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: '180px' }}>
+                                  {r.questionBody}
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                {/* Mini indicators for players' accuracy */}
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                  {players.map((p) => {
+                                    const pAns = r.answers.find((a) => a.userId === p.userId);
+                                    return (
+                                      <div 
+                                        key={p.userId} 
+                                        title={`${p.username}: ${pAns ? (pAns.isCorrect ? 'Correct' : 'Incorrect') : 'No Answer'}`}
+                                        style={{ 
+                                          width: '8px', 
+                                          height: '8px', 
+                                          borderRadius: '50%', 
+                                          background: pAns ? (pAns.isCorrect ? '#00e676' : '#ff1744') : 'rgba(255,255,255,0.1)' 
+                                        }} 
+                                      />
+                                    );
+                                  })}
+                                </div>
+                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                  {isExpanded ? '▲' : '▼'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Accordion Content */}
+                            {isExpanded && (
+                              <div style={{ padding: '16px', borderTop: '1px solid rgba(255, 255, 255, 0.04)', display: 'flex', flexDirection: 'column', gap: '12px', background: 'rgba(0, 0, 0, 0.15)' }}>
+                                <div style={{ fontSize: '0.9rem', color: '#ffffff', lineHeight: 1.5, background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.03)' }}>
+                                  <span style={{ fontWeight: 700, display: 'block', color: 'var(--primary)', marginBottom: '4px' }}>
+                                    {isRtl ? 'السؤال الكامل:' : 'Full Question:'}
+                                  </span>
+                                  {r.questionBody}
+                                </div>
+
+                                {/* Player results details */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', margin: '4px 0' }}>
+                                  <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                                    {isRtl ? 'إجابات اللاعبين:' : 'Player Performance:'}
+                                  </span>
+                                  {players.map((p) => {
+                                    const pAns = r.answers.find((a) => a.userId === p.userId);
+                                    const isSelf = p.userId === user?.id;
+                                    return (
+                                      <div 
+                                        key={p.userId} 
+                                        style={{ 
+                                          display: 'flex', 
+                                          justifyContent: 'space-between', 
+                                          alignItems: 'center', 
+                                          padding: '8px 12px', 
+                                          background: isSelf ? 'rgba(0, 242, 254, 0.03)' : 'rgba(255,255,255,0.01)', 
+                                          borderRadius: '6px',
+                                          border: isSelf ? '1px solid rgba(0, 242, 254, 0.1)' : '1px solid rgba(255,255,255,0.02)'
+                                        }}
+                                      >
+                                        <span style={{ fontSize: '0.85rem', color: '#ffffff', fontWeight: isSelf ? 700 : 500 }}>
+                                          {p.username} {isSelf && `(${isRtl ? 'أنت' : 'You'})`}
+                                        </span>
+                                        {pAns ? (
+                                          <span className={pAns.isCorrect ? "status-badge correct" : "status-badge incorrect"}>
+                                            {pAns.isCorrect ? '✔' : '✘'} {pAns.isCorrect ? t.correctLabel : t.incorrectLabel} ({(pAns.timeSpentMs / 1000).toFixed(1)}s)
+                                          </span>
+                                        ) : (
+                                          <span className="status-badge no-answer">
+                                            {t.noAnswerLabel}
+                                          </span>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* summary footer / return btn */}
+                  <div style={styles.summaryFooter}>
+                    <button style={styles.returnHubBtn} onClick={() => { playSFX('click'); setScreen('dashboard'); }}>
+                      {t.dashboardBtn}
+                    </button>
+                  </div>
+
+                </div>
+              );
+            })() : (
+              <div style={{ ...styles.statCard, padding: '40px', gap: '16px', justifyContent: 'center' }}>
+                <span className="animate-float" style={{ fontSize: '3rem' }}>🔍</span>
+                <span style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--primary)' }}>
+                  No match details found.
+                </span>
+                <button style={styles.returnHubBtn} onClick={() => setScreen('dashboard')}>
+                  {t.dashboardBtn}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
