@@ -373,6 +373,11 @@ export default function ClientPage() {
   const [floatingMessage, setFloatingMessage] = useState<{ sender: string; message: string; teamId: string | null } | null>(null);
   const [showSignalMenu, setShowSignalMenu] = useState(false);
   
+  // Buzzer & Bidding & Voting states
+  const [showBidModal, setShowBidModal] = useState(false);
+  const [bidValue, setBidValue] = useState(100);
+  const [teammateVotes, setTeammateVotes] = useState<{ [optionId: string]: string[] }>({}); // optionId -> usernames
+  
   // Timers and Refs
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const gameSyncRef = useRef<GameSyncService | null>(null);
@@ -412,6 +417,7 @@ export default function ClientPage() {
         setAnswerSubmitted(false);
         setIsAnswerCorrect(null);
         setRevealedCorrectAnswer(null);
+        setTeammateVotes({});
 
         if (data.question.type === 'ORDERING_QUESTION' && data.question.options) {
           const shuffled = [...data.question.options].sort(() => Math.random() - 0.5);
@@ -427,6 +433,10 @@ export default function ClientPage() {
         playSFX('buzz');
         setIsBuzzed(true);
         setBuzzedUser(data.username);
+      },
+      onBuzzerReset: () => {
+        setIsBuzzed(false);
+        setBuzzedUser(null);
       },
       onRoundEnded: (data) => {
         setIsAnswerCorrect(data.isCorrect);
@@ -461,6 +471,24 @@ export default function ClientPage() {
         }
       },
       onChatMessage: (data) => {
+        if (data.message.startsWith('__VOTE__:')) {
+          const optionId = data.message.substring(9);
+          setTeammateVotes(prev => {
+            const updated = { ...prev };
+            for (const key in updated) {
+              updated[key] = (updated[key] || []).filter(name => name !== data.username);
+            }
+            if (!updated[optionId]) {
+              updated[optionId] = [];
+            }
+            if (!updated[optionId].includes(data.username)) {
+              updated[optionId].push(data.username);
+            }
+            return updated;
+          });
+          return;
+        }
+
         setChatMessages(prev => [
           ...prev,
           { sender: data.username, message: data.message, teamId: data.teamId || null }
@@ -568,9 +596,23 @@ export default function ClientPage() {
     playSFX('click');
     const q = gameQuestions[currentQIndex];
     let userAns: any = null;
+    const bt = currentRoom?.config?.buzzerType || 'STANDARD';
 
     if (q.type === 'MULTIPLE_CHOICE' || q.type === 'TRUE_FALSE' || q.type === 'IMAGE_QUESTION' || q.type === 'CIRCUIT_QUESTION') {
-      userAns = selectedOption;
+      if (bt === 'TEAM_CONSULTATION') {
+        let maxVotes = 0;
+        let majorityOption = selectedOption;
+        for (const optId in teammateVotes) {
+          const votesCount = teammateVotes[optId]?.length || 0;
+          if (votesCount > maxVotes) {
+            maxVotes = votesCount;
+            majorityOption = optId;
+          }
+        }
+        userAns = majorityOption;
+      } else {
+        userAns = selectedOption;
+      }
     } else if (q.type === 'FILL_IN_THE_BLANK' || q.type === 'CALCULATION_QUESTION' || q.type === 'CODING_QUESTION') {
       userAns = textAnswer.trim();
     } else if (q.type === 'MULTI_SELECT') {
@@ -1406,11 +1448,23 @@ export default function ClientPage() {
     loadQuestion(0);
   };
 
-  const handleBuzz = async () => {
+  const handleBuzz = async (bid: number = 0) => {
     if (!buzzerActive || isBuzzed) return;
     
+    const bt = currentRoom?.config?.buzzerType || 'STANDARD';
+    if (bt === 'AUCTION' && bid === 0 && !showBidModal) {
+      setShowBidModal(true);
+      return;
+    }
+
     if (currentRoom && gameSyncRef.current && activeRoundRef.current) {
-      await gameSyncRef.current.buzz(activeRoundRef.current.id);
+      const ok = await gameSyncRef.current.buzz(activeRoundRef.current.id, bid);
+      if (ok && (bt === 'HIDDEN' || bt === 'AUCTION')) {
+        playSFX('buzz');
+        triggerVibrate(150);
+        setIsBuzzed(true);
+        setBuzzedUser(user!.username);
+      }
       return;
     }
 
@@ -1950,12 +2004,18 @@ export default function ClientPage() {
                         outline: 'none'
                       }}
                     >
-                      <option value="STANDARD">Standard</option>
-                      <option value="RISK">Risk Buzzer</option>
-                      <option value="SAFE">Safe Buzzer</option>
-                      <option value="COMPETITIVE">Competitive</option>
-                      <option value="SUDDEN_DEATH">Sudden Death</option>
-                    </select>
+                       <option value="STANDARD">{isRtl ? 'بازر قياسي' : 'Standard'}</option>
+                       <option value="RISK">{isRtl ? 'بازر المخاطرة' : 'Risk'}</option>
+                       <option value="SAFE">{isRtl ? 'بازر آمن' : 'Safe'}</option>
+                       <option value="COMPETITIVE">{isRtl ? 'تنافسي' : 'Competitive'}</option>
+                       <option value="SUDDEN_DEATH">{isRtl ? 'الموت المفاجئ' : 'Sudden Death'}</option>
+                       <option value="TEAM_RELAY">{isRtl ? 'تتابع الفريق' : 'Team Relay'}</option>
+                       <option value="CAPTAIN">{isRtl ? 'بازر القائد' : 'Captain'}</option>
+                       <option value="HIDDEN">{isRtl ? 'بازر خفي' : 'Hidden'}</option>
+                       <option value="AUCTION">{isRtl ? 'بازر المزاد' : 'Auction'}</option>
+                       <option value="TEAM_CONSULTATION">{isRtl ? 'تشاور الفريق' : 'Team Consultation'}</option>
+                       <option value="OPEN_DISCUSSION">{isRtl ? 'مناقشة مفتوحة' : 'Open Discussion'}</option>
+                     </select>
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -2023,7 +2083,23 @@ export default function ClientPage() {
                   </div>
                   <div style={styles.paramItem}>
                     <span style={styles.paramLabel}>{t.buzzer}:</span>
-                    <span style={styles.paramVal}>{currentRoom.config?.buzzerType}</span>
+                    <span style={styles.paramVal}>
+                      {(() => {
+                        const bt = currentRoom.config?.buzzerType || 'STANDARD';
+                        if (bt === 'STANDARD') return isRtl ? 'بازر قياسي' : 'Standard';
+                        if (bt === 'RISK') return isRtl ? 'بازر المخاطرة' : 'Risk';
+                        if (bt === 'SAFE') return isRtl ? 'بازر آمن' : 'Safe';
+                        if (bt === 'COMPETITIVE') return isRtl ? 'تنافسي' : 'Competitive';
+                        if (bt === 'SUDDEN_DEATH') return isRtl ? 'الموت المفاجئ' : 'Sudden Death';
+                        if (bt === 'TEAM_RELAY') return isRtl ? 'تتابع الفريق' : 'Team Relay';
+                        if (bt === 'CAPTAIN') return isRtl ? 'بازر القائد' : 'Captain';
+                        if (bt === 'HIDDEN') return isRtl ? 'بازر خفي' : 'Hidden';
+                        if (bt === 'AUCTION') return isRtl ? 'بازر المزاد' : 'Auction';
+                        if (bt === 'TEAM_CONSULTATION') return isRtl ? 'تشاور الفريق' : 'Team Consultation';
+                        if (bt === 'OPEN_DISCUSSION') return isRtl ? 'مناقشة مفتوحة' : 'Open Discussion';
+                        return bt;
+                      })()}
+                    </span>
                   </div>
                 </div>
               )}
@@ -2497,10 +2573,17 @@ export default function ClientPage() {
 
         {/* SCREEN: GAME BOARD */}
         {screen === 'game' && gameQuestions.length > 0 && (() => {
-          const isInputDisabled = answerSubmitted || isSpectator || (isBuzzed && buzzedUser !== user?.username);
-          
+          const bt = currentRoom?.config?.buzzerType || 'STANDARD';
           const selfPart = participants.find(p => p.userId === user?.id);
-          const myTeamId = selfPart?.teamId || 'team_a';
+          const myTeamId = selfPart?.teamId || null;
+          
+          const buzzedPlayerPart = participants.find(p => p.username === buzzedUser);
+          const buzzedTeamId = buzzedPlayerPart?.teamId || null;
+          const isMyTeamBuzzed = isBuzzed && (buzzedUser === user?.username || (myTeamId !== null && myTeamId === buzzedTeamId));
+          
+          const isInputDisabled = answerSubmitted || isSpectator || 
+            (isBuzzed && !isMyTeamBuzzed) || 
+            (isBuzzed && buzzedUser !== user?.username && bt !== 'TEAM_CONSULTATION');
           const isTeamMode = gameMode === 'TEAM_BATTLE';
           
           let leftTeamName: string = user?.username || 'Player';
@@ -2690,15 +2773,45 @@ export default function ClientPage() {
                       <button
                         key={opt.id}
                         disabled={isInputDisabled}
-                        onClick={() => { playSFX('click'); setSelectedOption(opt.id); }}
+                        onClick={() => {
+                          playSFX('click');
+                          setSelectedOption(opt.id);
+                          if (bt === 'TEAM_CONSULTATION' && currentRoom && gameSyncRef.current) {
+                            const selfId = user?.id;
+                            const activeParts = gameSyncRef.current.activeParticipants || [];
+                            const selfPart = activeParts.find(p => p.userId === selfId);
+                            const myTeamId = selfPart?.teamId || null;
+                            gameSyncRef.current.sendChatMessage('__VOTE__:' + opt.id, myTeamId);
+                          }
+                        }}
                         style={{
                           ...styles.answerCardBtn,
                           borderColor: selectedOption === opt.id ? '#00f2fe' : 'rgba(255, 255, 255, 0.08)',
-                          backgroundColor: selectedOption === opt.id ? 'rgba(0, 242, 254, 0.08)' : 'rgba(17, 19, 31, 0.65)'
+                          backgroundColor: selectedOption === opt.id ? 'rgba(0, 242, 254, 0.08)' : 'rgba(17, 19, 31, 0.65)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          width: '100%'
                         }}
                       >
-                        <span style={styles.optLetterBadge}>{opt.id.toUpperCase()}</span>
-                        <span style={styles.optText}>{opt.text}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={styles.optLetterBadge}>{opt.id.toUpperCase()}</span>
+                          <span style={styles.optText}>{opt.text}</span>
+                        </div>
+                        {bt === 'TEAM_CONSULTATION' && teammateVotes[opt.id]?.length > 0 && (
+                          <div style={{
+                            display: 'flex',
+                            gap: '4px',
+                            alignItems: 'center',
+                            fontSize: '0.75rem',
+                            backgroundColor: 'rgba(0, 242, 254, 0.2)',
+                            padding: '2px 8px',
+                            borderRadius: '10px',
+                            color: '#00f2fe'
+                          }}>
+                            👥 {teammateVotes[opt.id].length} ({teammateVotes[opt.id].join(', ')})
+                          </div>
+                        )}
                       </button>
                     ))}
                   </div>
@@ -2708,25 +2821,77 @@ export default function ClientPage() {
                   <div style={styles.tfStack}>
                     <button
                       disabled={isInputDisabled}
-                      onClick={() => { playSFX('click'); setSelectedOption('true'); }}
+                      onClick={() => {
+                        playSFX('click');
+                        setSelectedOption('true');
+                        if (bt === 'TEAM_CONSULTATION' && currentRoom && gameSyncRef.current) {
+                          const selfId = user?.id;
+                          const activeParts = gameSyncRef.current.activeParticipants || [];
+                          const selfPart = activeParts.find(p => p.userId === selfId);
+                          const myTeamId = selfPart?.teamId || null;
+                          gameSyncRef.current.sendChatMessage('__VOTE__:true', myTeamId);
+                        }
+                      }}
                       style={{
                         ...styles.tfCardBtn,
                         borderColor: selectedOption === 'true' ? '#00ff87' : 'rgba(255, 255, 255, 0.08)',
-                        backgroundColor: selectedOption === 'true' ? 'rgba(0, 255, 135, 0.08)' : 'rgba(17, 19, 31, 0.65)'
+                        backgroundColor: selectedOption === 'true' ? 'rgba(0, 255, 135, 0.08)' : 'rgba(17, 19, 31, 0.65)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '4px'
                       }}
                     >
-                      ✓ TRUE / صحيح
+                      <span>✓ TRUE / صحيح</span>
+                      {bt === 'TEAM_CONSULTATION' && teammateVotes['true']?.length > 0 && (
+                        <div style={{
+                          fontSize: '0.75rem',
+                          backgroundColor: 'rgba(0, 255, 135, 0.2)',
+                          padding: '2px 8px',
+                          borderRadius: '10px',
+                          color: '#00ff87'
+                        }}>
+                          👥 {teammateVotes['true'].length} ({teammateVotes['true'].join(', ')})
+                        </div>
+                      )}
                     </button>
                     <button
                       disabled={isInputDisabled}
-                      onClick={() => { playSFX('click'); setSelectedOption('false'); }}
+                      onClick={() => {
+                        playSFX('click');
+                        setSelectedOption('false');
+                        if (bt === 'TEAM_CONSULTATION' && currentRoom && gameSyncRef.current) {
+                          const selfId = user?.id;
+                          const activeParts = gameSyncRef.current.activeParticipants || [];
+                          const selfPart = activeParts.find(p => p.userId === selfId);
+                          const myTeamId = selfPart?.teamId || null;
+                          gameSyncRef.current.sendChatMessage('__VOTE__:false', myTeamId);
+                        }
+                      }}
                       style={{
                         ...styles.tfCardBtn,
                         borderColor: selectedOption === 'false' ? '#ff3b5c' : 'rgba(255, 255, 255, 0.08)',
-                        backgroundColor: selectedOption === 'false' ? 'rgba(255, 59, 92, 0.08)' : 'rgba(17, 19, 31, 0.65)'
+                        backgroundColor: selectedOption === 'false' ? 'rgba(255, 59, 92, 0.08)' : 'rgba(17, 19, 31, 0.65)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '4px'
                       }}
                     >
-                      ✕ FALSE / خطأ
+                      <span>✕ FALSE / خطأ</span>
+                      {bt === 'TEAM_CONSULTATION' && teammateVotes['false']?.length > 0 && (
+                        <div style={{
+                          fontSize: '0.75rem',
+                          backgroundColor: 'rgba(255, 59, 92, 0.2)',
+                          padding: '2px 8px',
+                          borderRadius: '10px',
+                          color: '#ff3b5c'
+                        }}>
+                          👥 {teammateVotes['false'].length} ({teammateVotes['false'].join(', ')})
+                        </div>
+                      )}
                     </button>
                   </div>
                 )}
@@ -3018,7 +3183,7 @@ export default function ClientPage() {
                     </div>
 
                     {buzzerActive && !isBuzzed && !answerSubmitted && (
-                      <button style={styles.buzzerCircBtn} onClick={handleBuzz}>
+                      <button style={styles.buzzerCircBtn} onClick={() => handleBuzz(0)}>
                         {t.buzzBtn}
                       </button>
                     )}
@@ -3033,7 +3198,16 @@ export default function ClientPage() {
                     {/* Waiting state for buzzer matches */}
                     {isBuzzed && buzzedUser !== user?.username && !answerSubmitted && (
                       <div style={styles.waitingForPlayerMessage}>
-                        {isRtl ? 'بانتظار إجابة الخصم...' : 'Waiting for opponent to answer...'}
+                        {bt === 'TEAM_CONSULTATION' && isMyTeamBuzzed ? (
+                          <div style={{ color: '#00f2fe', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center', textAlign: 'center' }}>
+                            <span style={{ fontWeight: 'bold' }}>👥 {isRtl ? 'تشاور الفريق: صوّت على الإجابة الصحيحة مع فريقك!' : 'TEAM CONSULTATION: Vote on the correct answer with your team!'}</span>
+                            <span style={{ fontSize: '0.8rem', color: 'rgba(255, 255, 255, 0.6)' }}>
+                              {isRtl ? '(صوتك يظهر فوراً لزملائك، وسيتم تقديم خيار الأغلبية)' : '(Your vote is shared instantly; majority choice will be submitted)'}
+                            </span>
+                          </div>
+                        ) : (
+                          isRtl ? 'بانتظار إجابة الخصم...' : 'Waiting for opponent to answer...'
+                        )}
                       </div>
                     )}
 
@@ -3451,6 +3625,95 @@ export default function ClientPage() {
             </div>
           );
         })()}
+
+        {/* AUCTION BIDDING MODAL */}
+        {showBidModal && (
+          <div style={customStyles.alertOverlay}>
+            <div style={{ ...customStyles.alertBox, border: `2px solid #ffcc00`, boxShadow: `0 0 20px #ffcc0040, inset 0 0 10px #ffcc0015` }}>
+              <div style={customStyles.alertHeader}>
+                <span style={{ ...customStyles.alertTitle, color: '#ffcc00' }}>
+                  {isRtl ? '🪙 مزاد النقاط' : '🪙 POINTS AUCTION'}
+                </span>
+              </div>
+              <div style={{ ...customStyles.alertBody, display: 'flex', flexDirection: 'column', gap: '16px', alignItems: 'center' }}>
+                <p style={{ ...customStyles.alertMessage, textAlign: 'center', margin: 0 }}>
+                  {isRtl ? 'اختر عدد النقاط التي تريد المراهنة بها على هذا السؤال:' : 'Choose the points you want to bid on this question:'}
+                </p>
+                <div style={{ fontSize: '2rem', fontWeight: 900, color: '#ffcc00' }}>
+                  {bidValue} pts
+                </div>
+                <input
+                  type="range"
+                  min="10"
+                  max="500"
+                  step="10"
+                  value={bidValue}
+                  onChange={(e) => setBidValue(Number(e.target.value))}
+                  style={{
+                    width: '100%',
+                    accentColor: '#ffcc00',
+                    cursor: 'pointer'
+                  }}
+                />
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                  {[50, 100, 200, 300, 500].map(val => (
+                    <button
+                      key={val}
+                      onClick={() => { playSFX('click'); setBidValue(val); }}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        backgroundColor: bidValue === val ? '#ffcc00' : 'rgba(255, 255, 255, 0.05)',
+                        color: bidValue === val ? '#111528' : '#ffffff',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        cursor: 'pointer',
+                        fontSize: '0.8rem',
+                        fontWeight: 'bold'
+                      }}
+                    >
+                      {val}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ display: 'flex', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                <button
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: 'transparent',
+                    color: '#ffffff',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem'
+                  }}
+                  onClick={() => { playSFX('click'); setShowBidModal(false); }}
+                >
+                  {isRtl ? 'إلغاء' : 'Cancel'}
+                </button>
+                <button
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: '#ffcc00',
+                    color: '#111528',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem',
+                    fontWeight: 'bold'
+                  }}
+                  onClick={() => {
+                    playSFX('click');
+                    setShowBidModal(false);
+                    handleBuzz(bidValue);
+                  }}
+                >
+                  {isRtl ? 'تأكيد المزايدة' : 'Confirm Bid'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>

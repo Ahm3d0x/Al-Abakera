@@ -16,6 +16,7 @@ export type GameSyncCallbacks = {
   }) => void;
   onTick?: (data: { timeLeft: number }) => void;
   onBuzzed?: (data: { userId: string; username: string }) => void;
+  onBuzzerReset?: () => void;
   onRoundEnded?: (data: {
     userId: string | null;
     isCorrect: boolean;
@@ -218,6 +219,10 @@ export class GameSyncService {
             // Check if buzzer was claimed
             if (payload.old?.buzzed_player_id === null && round.buzzed_player_id !== null) {
               this.handleBuzzedEvent(round);
+            }
+            // Check if buzzer was reset (COMPETITIVE mode wrong answer)
+            if (payload.old?.buzzed_player_id !== null && round.buzzed_player_id === null) {
+              this.handleBuzzerReset();
             }
             // Check if round ended
             if (payload.old?.ended_at === null && round.ended_at !== null) {
@@ -477,6 +482,13 @@ export class GameSyncService {
     }
   }
 
+  private handleBuzzerReset() {
+    if (this.roundTimer) clearInterval(this.roundTimer);
+    if (this.callbacks.onBuzzerReset) {
+      this.callbacks.onBuzzerReset();
+    }
+  }
+
   /**
    * Handle round completion
    */
@@ -718,11 +730,12 @@ export class GameSyncService {
   /**
    * Action: Buzzer claim (concurrency-safe via database atomic lock function RPC)
    */
-  public async buzz(roundId: string): Promise<boolean> {
+   public async buzz(roundId: string, bid: number = 0): Promise<boolean> {
     try {
       const { data: success, error } = await supabase.rpc("claim_buzzer", {
         p_round_id: roundId,
         p_user_id: this.userId,
+        p_bid: bid
       });
 
       if (error) {
