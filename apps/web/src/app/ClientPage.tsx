@@ -378,6 +378,26 @@ export default function ClientPage() {
   const [bidValue, setBidValue] = useState(100);
   const [teammateVotes, setTeammateVotes] = useState<{ [optionId: string]: string[] }>({}); // optionId -> usernames
   
+  // Power-Ups states
+  const [showStoreModal, setShowStoreModal] = useState(false);
+  const [hiddenOptions, setHiddenOptions] = useState<string[]>([]);
+  const [hasDoubleChanceActive, setHasDoubleChanceActive] = useState(false);
+  const [powerUpBlockActive, setPowerUpBlockActive] = useState(false);
+
+  const ALL_POWER_UPS = [
+    { type: 'JOKER', label: '⚡ Joker', desc: isRtl ? 'مضاعفة نقاط السؤال الصحيح' : 'Doubles correct question points', cost: 50 },
+    { type: 'FREEZE', label: '❄ Freeze', desc: isRtl ? 'خصم 10 ثوان من مؤقت الخصم' : 'Deducts 10s from opponents timer', cost: 50 },
+    { type: 'SHIELD', label: '🛡 Shield', desc: isRtl ? 'إلغاء عقوبة الإجابة الخاطئة' : 'Cancels wrong answer penalty', cost: 50 },
+    { type: 'REVEAL_HINT', label: '💡 Hint', desc: isRtl ? 'حذف خيارين خاطئين من السؤال' : 'Hides two wrong MCQ options', cost: 50 },
+    { type: 'DOUBLE_CHANCE', label: '🎯 Double', desc: isRtl ? 'فرصة ثانية عند الخطأ في الإجابة' : 'Gives a second attempt on error', cost: 50 },
+    { type: 'STEAL', label: '🪝 Steal', desc: isRtl ? 'سرقة السؤال بعد ضغط الخصم' : 'Steals buzz if opponent hasnt answered', cost: 50 },
+    { type: 'TIME_BOOST', label: '⏱ Boost', desc: isRtl ? 'إضافة 10 ثوان لمؤقتك الخاص' : 'Adds 10 seconds to your timer', cost: 50 },
+    { type: 'POINT_MULTIPLIER', label: '✨ Multiplier', desc: isRtl ? 'مضاعفة نقاط الجولة بمقدار 1.5x' : 'Multiplies round points by 1.5x', cost: 50 },
+    { type: 'CATEGORY_SWAP', label: '🔄 Swap', desc: isRtl ? 'تغيير فئة السؤال الحالي' : 'Swaps current question category', cost: 50 },
+    { type: 'SKIP_QUESTION', label: '⏭ Skip', desc: isRtl ? 'تجاوز السؤال الحالي بالكامل' : 'Skips the current question entirely', cost: 50 },
+    { type: 'BLOCK_POWER_UP', label: '🚫 Block', desc: isRtl ? 'منع الخصوم من تفعيل المساعدات' : 'Blocks opponent power-ups this round', cost: 50 }
+  ];
+
   // Timers and Refs
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const gameSyncRef = useRef<GameSyncService | null>(null);
@@ -418,6 +438,13 @@ export default function ClientPage() {
         setIsAnswerCorrect(null);
         setRevealedCorrectAnswer(null);
         setTeammateVotes({});
+        setHiddenOptions([]);
+        setHasDoubleChanceActive(false);
+        setPowerUpBlockActive(false);
+        const mode = currentRoom?.config?.mode || 'FREE_FOR_ALL';
+        if (mode === 'PRACTICE') {
+          setInventoryPowerUps(['JOKER', 'FREEZE', 'SHIELD', 'REVEAL_HINT', 'DOUBLE_CHANCE', 'STEAL', 'TIME_BOOST', 'POINT_MULTIPLIER', 'CATEGORY_SWAP', 'SKIP_QUESTION', 'BLOCK_POWER_UP']);
+        }
 
         if (data.question.type === 'ORDERING_QUESTION' && data.question.options) {
           const shuffled = [...data.question.options].sort(() => Math.random() - 0.5);
@@ -465,9 +492,17 @@ export default function ClientPage() {
         refreshProfile();
       },
       onPowerUpUsed: (data) => {
+        const oppName = participants.find(p => p.userId === data.userId)?.username || (isRtl ? 'الخصم' : 'Opponent');
         if (data.powerUpType === 'FREEZE' && data.targetUserId === user!.id) {
           triggerGamingAlert(isRtl ? 'تم تجميدك من قبل الخصم!' : 'You have been frozen by the opponent!', 'warning');
           setTimeLeft(prev => Math.max(0, prev - 10));
+        }
+        if (data.powerUpType === 'BLOCK_POWER_UP' && data.userId !== user!.id) {
+          triggerGamingAlert(isRtl ? 'تم حظر مساعداتك لهذه الجولة!' : 'Your power-ups have been blocked for this round!', 'error');
+          setPowerUpBlockActive(true);
+        }
+        if (data.powerUpType === 'STEAL' && data.userId !== user!.id) {
+          triggerGamingAlert(isRtl ? `قام ${oppName} بسرقة البازر الخاص بك!` : `${oppName} stole your buzz!`, 'warning');
         }
       },
       onChatMessage: (data) => {
@@ -629,6 +664,31 @@ export default function ClientPage() {
         'warning'
       );
       return;
+    }
+
+    if (hasDoubleChanceActive) {
+      const res = await supabase.rpc('check_answer_correct', {
+        p_question_id: q.id,
+        p_answer: typeof userAns === 'object' ? userAns : JSON.stringify(userAns)
+      });
+      
+      if (!res.error) {
+        const isCorrect = res.data;
+        if (!isCorrect) {
+          playSFX('wrong');
+          setHasDoubleChanceActive(false);
+          triggerGamingAlert(
+            isRtl ? 'إجابة خاطئة! تم تفعيل الفرصة الثانية، حاول مجدداً.' : 'Wrong answer! Second chance activated, try again.',
+            'warning'
+          );
+          if (typeof userAns === 'string') {
+            setHiddenOptions(prev => [...prev, userAns]);
+          }
+          return;
+        } else {
+          setHasDoubleChanceActive(false);
+        }
+      }
     }
 
     // Co-ordinate multiplayer matches via Supabase Realtime Service instead of local grading
@@ -1475,15 +1535,166 @@ export default function ClientPage() {
     setTimeLeft(10);
   };
 
-  const activatePowerUp = (type: string) => {
+  const purchasePowerUp = async (type: string) => {
+    if (!user) return;
+    if (user.coins < 50) {
+      triggerGamingAlert(isRtl ? 'ليس لديك نقود كافية!' : 'Not enough coins!', 'error');
+      return;
+    }
+    
+    const { error } = await supabase
+      .from('profiles')
+      .update({ coins: user.coins - 50 })
+      .eq('id', user.id);
+      
+    if (error) {
+      triggerGamingAlert(isRtl ? 'فشل شراء المساعد!' : 'Failed to purchase power-up!', 'error');
+      return;
+    }
+    
+    setInventoryPowerUps(prev => [...prev, type]);
+    await refreshProfile();
+    triggerGamingAlert(isRtl ? 'تم الشراء بنجاح!' : 'Purchased successfully!', 'success');
+  };
+
+  const activatePowerUp = async (type: string) => {
     if (activePowerUps.includes(type)) return;
+    
+    const bt = currentRoom?.config?.buzzerType || 'STANDARD';
+    const q = gameQuestions[currentQIndex];
+
+    // Steal logic
+    if (type === 'STEAL') {
+      if (!isBuzzed || buzzedUser === user?.username) {
+        triggerGamingAlert(isRtl ? 'يمكنك استخدام السرقة فقط عندما يضغط الخصم البازر أولاً!' : 'You can only use Steal when the opponent buzzes first!', 'warning');
+        return;
+      }
+      if (currentRoom && activeRoundRef.current) {
+        const ok = await supabase.rpc('steal_round_buzz', {
+          p_round_id: activeRoundRef.current.id,
+          p_user_id: user!.id
+        });
+        if (ok.data) {
+          playSFX('correct');
+          triggerGamingAlert(isRtl ? 'تمت سرقة السؤال بنجاح!' : 'Question stolen successfully!', 'success');
+          gameSyncRef.current?.broadcastPowerUp('STEAL', user!.id);
+        } else {
+          triggerGamingAlert(isRtl ? 'فشل سرقة السؤال، ربما أجاب الخصم بالفعل!' : 'Failed to steal question, opponent might have answered!', 'error');
+          return;
+        }
+      }
+    }
+
+    // Category Swap logic
+    if (type === 'CATEGORY_SWAP') {
+      if (isBuzzed) {
+        triggerGamingAlert(isRtl ? 'لا يمكنك تبديل الفئة بعد ضغط البازر!' : 'Cannot swap category after buzzer is pressed!', 'warning');
+        return;
+      }
+      if (currentRoom && activeRoundRef.current) {
+        const ok = await supabase.rpc('swap_round_category', {
+          p_round_id: activeRoundRef.current.id,
+          p_user_id: user!.id
+        });
+        if (ok.data) {
+          playSFX('correct');
+          triggerGamingAlert(isRtl ? 'تم تبديل الفئة بنجاح!' : 'Category swapped successfully!', 'success');
+        } else {
+          triggerGamingAlert(isRtl ? 'فشل تبديل الفئة!' : 'Failed to swap category!', 'error');
+          return;
+        }
+      }
+    }
+
+    // Skip Question logic
+    if (type === 'SKIP_QUESTION') {
+      if (currentRoom && activeRoundRef.current) {
+        const ok = await supabase.rpc('skip_round_question', {
+          p_round_id: activeRoundRef.current.id,
+          p_user_id: user!.id
+        });
+        if (ok.data) {
+          playSFX('correct');
+          triggerGamingAlert(isRtl ? 'تم تخطي السؤال!' : 'Question skipped!', 'success');
+        } else {
+          triggerGamingAlert(isRtl ? 'فشل تخطي السؤال!' : 'Failed to skip question!', 'error');
+          return;
+        }
+      } else {
+        nextQuestion();
+      }
+    }
+
+    // Client-side execution
     playSFX('buzz');
     triggerVibrate(80);
     setActivePowerUps(prev => [...prev, type]);
-    setInventoryPowerUps(prev => prev.filter(p => p !== type));
+    
+    if (gameMode !== 'PRACTICE') {
+      setInventoryPowerUps(prev => {
+        const index = prev.indexOf(type);
+        if (index > -1) {
+          const nextInv = [...prev];
+          nextInv.splice(index, 1);
+          return nextInv;
+        }
+        return prev;
+      });
+    }
 
     if (type === 'FREEZE') {
+      if (currentRoom && gameSyncRef.current) {
+        const opp = participants.find(p => p.userId !== user?.id && !p.isSpectator);
+        if (opp) {
+          gameSyncRef.current.broadcastPowerUp('FREEZE', opp.userId);
+        }
+      }
+    }
+
+    if (type === 'BLOCK_POWER_UP') {
+      if (currentRoom && gameSyncRef.current) {
+        gameSyncRef.current.broadcastPowerUp('BLOCK_POWER_UP');
+      }
+    }
+
+    if (type === 'TIME_BOOST') {
       setTimeLeft(prev => prev + 10);
+    }
+
+    if (type === 'REVEAL_HINT') {
+      if (q && q.correctAnswer) {
+        const incorrect = q.options?.filter(o => o.id !== q.correctAnswer) || [];
+        const toHide = incorrect.sort(() => Math.random() - 0.5).slice(0, 2).map(o => o.id);
+        setHiddenOptions(toHide);
+        triggerGamingAlert(isRtl ? 'تم حذف خيارين خاطئين!' : 'Two incorrect options removed!', 'success');
+      } else {
+        if (q && q.explanation) {
+          triggerGamingAlert(isRtl ? `تلميح: ${q.explanation}` : `Hint: ${q.explanation}`, 'info');
+        } else if (q && q.options && q.options.length > 1) {
+          let hiddenOne = false;
+          for (const opt of q.options) {
+            const res = await supabase.rpc('check_answer_correct', {
+              p_question_id: q.id,
+              p_answer: JSON.stringify(opt.id)
+            });
+            if (!res.error && !res.data) {
+              setHiddenOptions([opt.id]);
+              triggerGamingAlert(isRtl ? 'تم حذف خيار خاطئ!' : 'One incorrect option removed!', 'success');
+              hiddenOne = true;
+              break;
+            }
+          }
+          if (!hiddenOne) {
+            triggerGamingAlert(isRtl ? 'لا يوجد تلميح متاح!' : 'No hint available!', 'info');
+          }
+        } else {
+          triggerGamingAlert(isRtl ? 'لا يوجد تلميح متاح!' : 'No hint available!', 'info');
+        }
+      }
+    }
+
+    if (type === 'DOUBLE_CHANCE') {
+      setHasDoubleChanceActive(true);
     }
   };
 
@@ -2772,7 +2983,7 @@ export default function ClientPage() {
                     {gameQuestions[currentQIndex].options?.map((opt) => (
                       <button
                         key={opt.id}
-                        disabled={isInputDisabled}
+                        disabled={isInputDisabled || hiddenOptions.includes(opt.id)}
                         onClick={() => {
                           playSFX('click');
                           setSelectedOption(opt.id);
@@ -2788,6 +2999,8 @@ export default function ClientPage() {
                           ...styles.answerCardBtn,
                           borderColor: selectedOption === opt.id ? '#00f2fe' : 'rgba(255, 255, 255, 0.08)',
                           backgroundColor: selectedOption === opt.id ? 'rgba(0, 242, 254, 0.08)' : 'rgba(17, 19, 31, 0.65)',
+                          opacity: hiddenOptions.includes(opt.id) ? 0.25 : 1,
+                          cursor: hiddenOptions.includes(opt.id) ? 'not-allowed' : 'pointer',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
@@ -2820,7 +3033,7 @@ export default function ClientPage() {
                 {gameQuestions[currentQIndex].type === 'TRUE_FALSE' && (
                   <div style={styles.tfStack}>
                     <button
-                      disabled={isInputDisabled}
+                      disabled={isInputDisabled || hiddenOptions.includes('true')}
                       onClick={() => {
                         playSFX('click');
                         setSelectedOption('true');
@@ -2836,6 +3049,8 @@ export default function ClientPage() {
                         ...styles.tfCardBtn,
                         borderColor: selectedOption === 'true' ? '#00ff87' : 'rgba(255, 255, 255, 0.08)',
                         backgroundColor: selectedOption === 'true' ? 'rgba(0, 255, 135, 0.08)' : 'rgba(17, 19, 31, 0.65)',
+                        opacity: hiddenOptions.includes('true') ? 0.25 : 1,
+                        cursor: hiddenOptions.includes('true') ? 'not-allowed' : 'pointer',
                         display: 'flex',
                         flexDirection: 'column',
                         alignItems: 'center',
@@ -2857,7 +3072,7 @@ export default function ClientPage() {
                       )}
                     </button>
                     <button
-                      disabled={isInputDisabled}
+                      disabled={isInputDisabled || hiddenOptions.includes('false')}
                       onClick={() => {
                         playSFX('click');
                         setSelectedOption('false');
@@ -2873,6 +3088,8 @@ export default function ClientPage() {
                         ...styles.tfCardBtn,
                         borderColor: selectedOption === 'false' ? '#ff3b5c' : 'rgba(255, 255, 255, 0.08)',
                         backgroundColor: selectedOption === 'false' ? 'rgba(255, 59, 92, 0.08)' : 'rgba(17, 19, 31, 0.65)',
+                        opacity: hiddenOptions.includes('false') ? 0.25 : 1,
+                        cursor: hiddenOptions.includes('false') ? 'not-allowed' : 'pointer',
                         display: 'flex',
                         flexDirection: 'column',
                         alignItems: 'center',
@@ -3162,23 +3379,47 @@ export default function ClientPage() {
                         )}
                       </div>
                       <div style={styles.powerupList}>
-                        {inventoryPowerUps.map((p) => (
+                        {inventoryPowerUps.map((p, idx) => (
                           <button
-                            key={p}
-                            disabled={answerSubmitted}
+                            key={p + '-' + idx}
+                            disabled={answerSubmitted || powerUpBlockActive}
                             onClick={() => activatePowerUp(p)}
                             style={{
                               ...styles.powerUpChipBtn,
                               backgroundColor: activePowerUps.includes(p) ? '#00f2fe' : 'rgba(255, 255, 255, 0.04)',
                               color: activePowerUps.includes(p) ? '#05060f' : '#f0f4ff',
-                              borderColor: activePowerUps.includes(p) ? '#00f2fe' : 'rgba(255, 255, 255, 0.08)'
+                              borderColor: activePowerUps.includes(p) ? '#00f2fe' : 'rgba(255, 255, 255, 0.08)',
+                              opacity: powerUpBlockActive ? 0.3 : 1
                             }}
                           >
                             {p === 'JOKER' && '⚡ Joker'}
                             {p === 'FREEZE' && '❄ Freeze'}
                             {p === 'SHIELD' && '🛡 Shield'}
+                            {p === 'REVEAL_HINT' && '💡 Hint'}
+                            {p === 'DOUBLE_CHANCE' && '🎯 Double'}
+                            {p === 'STEAL' && '🪝 Steal'}
+                            {p === 'TIME_BOOST' && '⏱ Boost'}
+                            {p === 'POINT_MULTIPLIER' && '✨ Multiplier'}
+                            {p === 'CATEGORY_SWAP' && '🔄 Swap'}
+                            {p === 'SKIP_QUESTION' && '⏭ Skip'}
+                            {p === 'BLOCK_POWER_UP' && '🚫 Block'}
                           </button>
                         ))}
+                        {inventoryPowerUps.length < 4 && gameMode !== 'PRACTICE' && (
+                          <button
+                            disabled={answerSubmitted || powerUpBlockActive}
+                            onClick={() => { playSFX('click'); setShowStoreModal(true); }}
+                            style={{
+                              ...styles.powerUpChipBtn,
+                              backgroundColor: 'rgba(0, 242, 254, 0.1)',
+                              color: '#00f2fe',
+                              borderColor: 'rgba(0, 242, 254, 0.3)',
+                              fontWeight: 'bold'
+                            }}
+                          >
+                            🛒 {isRtl ? '+ متجر' : '+ Store'}
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -3709,6 +3950,85 @@ export default function ClientPage() {
                   }}
                 >
                   {isRtl ? 'تأكيد المزايدة' : 'Confirm Bid'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* POWER-UP STORE MODAL */}
+        {showStoreModal && (
+          <div style={customStyles.alertOverlay}>
+            <div style={{ ...customStyles.alertBox, border: `2px solid #00f2fe`, boxShadow: `0 0 20px #00f2fe40, inset 0 0 10px #00f2fe15`, maxWidth: '450px' }}>
+              <div style={customStyles.alertHeader}>
+                <span style={{ ...customStyles.alertTitle, color: '#00f2fe' }}>
+                  🛒 {isRtl ? 'متجر المساعدات' : 'POWER-UP SHOP'}
+                </span>
+                <span style={{ marginLeft: 'auto', fontSize: '0.85rem', color: '#ffd700', fontWeight: 'bold' }}>
+                  🪙 {user?.coins || 0}
+                </span>
+              </div>
+              <div style={{ ...customStyles.alertBody, maxHeight: '300px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px', padding: '16px' }}>
+                {ALL_POWER_UPS.map((pu) => {
+                  const isSoloMode = gameMode === 'TIMED_CHALLENGE' || gameMode === 'SURVIVAL';
+                  const isDisabledInSolo = isSoloMode && (pu.type === 'FREEZE' || pu.type === 'STEAL' || pu.type === 'BLOCK_POWER_UP');
+                  
+                  return (
+                    <div
+                      key={pu.type}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '10px',
+                        backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        borderRadius: '8px',
+                        opacity: isDisabledInSolo ? 0.4 : 1
+                      }}
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
+                        <span style={{ fontWeight: 'bold', color: '#f0f4ff', fontSize: '0.85rem' }}>{pu.label}</span>
+                        <span style={{ color: 'rgba(240, 244, 255, 0.6)', fontSize: '0.75rem' }}>
+                          {pu.desc} {isDisabledInSolo && `(${isRtl ? 'غير متاح فردي' : 'Solo Disabled'})`}
+                        </span>
+                      </div>
+                      <button
+                        disabled={isDisabledInSolo || (user?.coins || 0) < pu.cost}
+                        onClick={() => { playSFX('click'); purchasePowerUp(pu.type); }}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          backgroundColor: isDisabledInSolo ? 'rgba(255,255,255,0.05)' : (user?.coins || 0) >= pu.cost ? '#00f2fe' : 'rgba(255,255,255,0.05)',
+                          color: isDisabledInSolo ? 'rgba(255,255,255,0.3)' : (user?.coins || 0) >= pu.cost ? '#05060f' : 'rgba(255,255,255,0.3)',
+                          border: 'none',
+                          cursor: (isDisabledInSolo || (user?.coins || 0) < pu.cost) ? 'not-allowed' : 'pointer',
+                          fontSize: '0.8rem',
+                          fontWeight: 'bold',
+                          minWidth: '80px'
+                        }}
+                      >
+                        {pu.cost} 🪙
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ display: 'flex', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                <button
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: 'transparent',
+                    color: '#ffffff',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem',
+                    textAlign: 'center'
+                  }}
+                  onClick={() => { playSFX('click'); setShowStoreModal(false); }}
+                >
+                  {isRtl ? 'إغلاق' : 'Close'}
                 </button>
               </div>
             </div>

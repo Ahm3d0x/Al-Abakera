@@ -216,8 +216,8 @@ export class GameSyncService {
             .maybeSingle();
 
           if (match && round.match_id === match.id) {
-            // Check if buzzer was claimed
-            if (payload.old?.buzzed_player_id === null && round.buzzed_player_id !== null) {
+            // Check if buzzer was claimed or stolen
+            if (payload.old?.buzzed_player_id !== round.buzzed_player_id && round.buzzed_player_id !== null) {
               this.handleBuzzedEvent(round);
             }
             // Check if buzzer was reset (COMPETITIVE mode wrong answer)

@@ -1,95 +1,160 @@
 -- ==========================================
--- Mind Race — Buzzer System Enhancements
+-- Mind Race — Power-Ups enhancements
 -- ==========================================
 
--- 1. Add buzzer_presses to match_rounds if it doesn't exist
-ALTER TABLE match_rounds ADD COLUMN IF NOT EXISTS buzzer_presses JSONB DEFAULT '[]'::jsonb;
-
--- 2. Atomic claim_buzzer RPC supporting Standard, Risk, Safe, Competitive, Sudden Death, Relay, Captain, Hidden, and Auction modes
-DROP FUNCTION IF EXISTS claim_buzzer(UUID, UUID);
-CREATE OR REPLACE FUNCTION claim_buzzer(p_round_id UUID, p_user_id UUID, p_bid INTEGER DEFAULT 0)
+-- 1. Create swap_round_category RPC to allow CATEGORY_SWAP power-up
+CREATE OR REPLACE FUNCTION swap_round_category(p_round_id UUID, p_user_id UUID)
 RETURNS BOOLEAN AS $$
 DECLARE
-  v_room_id UUID;
   v_match_id UUID;
-  v_host_id UUID;
-  v_team_id TEXT;
-  v_buzzer_type TEXT;
-  v_current_round_number INTEGER;
-  v_is_captain BOOLEAN := FALSE;
-  v_updated INTEGER;
-  v_now_ms INTEGER;
+  v_current_q_id UUID;
+  v_current_category TEXT;
+  v_next_q_id UUID;
 BEGIN
-  v_now_ms := floor(extract(epoch from now()) * 1000);
+  -- Fetch current question and match details
+  SELECT match_id, question_id
+  INTO v_match_id, v_current_q_id
+  FROM match_rounds
+  WHERE id = p_round_id;
 
-  -- Fetch room, match, and round configuration
-  SELECT r.id, mr.match_id, r.host_id, rp.team_id, coalesce(m.config->>'buzzerType', 'STANDARD'), mr.round_number
-  INTO v_room_id, v_match_id, v_host_id, v_team_id, v_buzzer_type, v_current_round_number
-  FROM match_rounds mr
-  JOIN matches m ON m.id = mr.match_id
-  JOIN rooms r ON r.id = m.room_id
-  LEFT JOIN room_participants rp ON rp.room_id = r.id AND rp.user_id = p_user_id
-  WHERE mr.id = p_round_id;
+  SELECT category INTO v_current_category
+  FROM questions
+  WHERE id = v_current_q_id;
 
-  -- Prevent buzzing if player already answered in this round
-  IF EXISTS (SELECT 1 FROM round_answers WHERE round_id = p_round_id AND user_id = p_user_id) THEN
-    RETURN FALSE;
+  -- Select a question from a different category, excluding already used questions in this match
+  SELECT id INTO v_next_q_id
+  FROM questions
+  WHERE category <> v_current_category
+    AND id NOT IN (
+      SELECT question_id FROM match_rounds WHERE match_id = v_match_id
+    )
+  ORDER BY random()
+  LIMIT 1;
+
+  IF v_next_q_id IS NULL THEN
+    -- Fallback to any random unused question
+    SELECT id INTO v_next_q_id
+    FROM questions
+    WHERE id NOT IN (
+      SELECT question_id FROM match_rounds WHERE match_id = v_match_id
+    )
+    ORDER BY random()
+    LIMIT 1;
   END IF;
 
-  -- CAPTAIN buzzer type: only team captains can buzz
-  IF v_buzzer_type = 'CAPTAIN' THEN
-    IF p_user_id = v_host_id THEN
-      v_is_captain := TRUE;
-    ELSE
-      -- Counterpart captain: first player on the non-host team
-      IF NOT EXISTS (SELECT 1 FROM room_participants WHERE room_id = v_room_id AND user_id = v_host_id AND team_id = v_team_id) THEN
-        IF p_user_id = (
-          SELECT user_id FROM room_participants
-          WHERE room_id = v_room_id AND team_id = v_team_id
-          ORDER BY joined_at ASC LIMIT 1
-        ) THEN
-          v_is_captain := TRUE;
-        END IF;
-      END IF;
-    END IF;
-
-    IF NOT v_is_captain THEN
-      RETURN FALSE;
-    END IF;
-  END IF;
-
-  -- TEAM_RELAY buzzer type: players must alternate turns
-  IF v_buzzer_type = 'TEAM_RELAY' AND v_team_id IS NOT NULL AND v_current_round_number > 0 THEN
-    IF EXISTS (
-      SELECT 1 FROM match_rounds mr
-      WHERE mr.match_id = v_match_id
-        AND mr.round_number = v_current_round_number - 1
-        AND mr.buzzed_player_id = p_user_id
-    ) THEN
-      RETURN FALSE;
-    END IF;
-  END IF;
-
-  -- HIDDEN and AUCTION buzzer types: collect all presses dynamically
-  IF v_buzzer_type = 'HIDDEN' OR v_buzzer_type = 'AUCTION' THEN
+  IF v_next_q_id IS NOT NULL THEN
     UPDATE match_rounds
-    SET buzzer_presses = coalesce(buzzer_presses, '[]'::jsonb) || jsonb_build_object('user_id', p_user_id, 'time_ms', v_now_ms, 'bid', p_bid)
+    SET question_id = v_next_q_id
     WHERE id = p_round_id;
     RETURN TRUE;
   END IF;
 
-  -- Default / Standard / Competitive / Risk / Safe / Sudden Death (First press wins)
-  UPDATE match_rounds
-  SET buzzed_player_id = p_user_id, buzz_time_ms = v_now_ms
-  WHERE id = p_round_id AND buzzed_player_id IS NULL;
-
-  GET DIAGNOSTICS v_updated = ROW_COUNT;
-  RETURN v_updated > 0;
+  RETURN FALSE;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
--- 3. Update grade_round_answer trigger function with all buzzer type points and penalties
+-- 2. Create skip_round_question RPC to allow SKIP_QUESTION power-up
+CREATE OR REPLACE FUNCTION skip_round_question(p_round_id UUID, p_user_id UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+  UPDATE match_rounds
+  SET ended_at = NOW()
+  WHERE id = p_round_id AND ended_at IS NULL;
+  RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+-- 3. Create steal_round_buzz RPC to allow STEAL power-up
+CREATE OR REPLACE FUNCTION steal_round_buzz(p_round_id UUID, p_user_id UUID)
+RETURNS BOOLEAN AS $$
+DECLARE
+  v_updated INTEGER;
+BEGIN
+  -- Verify if someone buzzed but hasn't submitted yet
+  IF NOT EXISTS (SELECT 1 FROM round_answers WHERE round_id = p_round_id) THEN
+    UPDATE match_rounds
+    SET buzzed_player_id = p_user_id, buzz_time_ms = floor(extract(epoch from now()) * 1000)
+    WHERE id = p_round_id AND buzzed_player_id IS NOT NULL;
+    
+    GET DIAGNOSTICS v_updated = ROW_COUNT;
+    RETURN v_updated > 0;
+  END IF;
+  
+  RETURN FALSE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+-- 4. Create check_answer_correct RPC to securely check answer correctness for DOUBLE_CHANCE
+CREATE OR REPLACE FUNCTION check_answer_correct(p_question_id UUID, p_answer JSONB)
+RETURNS BOOLEAN AS $$
+DECLARE
+  v_q_type TEXT;
+  v_correct_answer JSONB;
+  v_ordering_items JSONB;
+  v_matching_pairs JSONB;
+  v_is_correct BOOLEAN := FALSE;
+BEGIN
+  SELECT type::text, correct_answer, ordering_items, matching_pairs
+  INTO v_q_type, v_correct_answer, v_ordering_items, v_matching_pairs
+  FROM questions
+  WHERE id = p_question_id;
+
+  IF v_q_type = 'MULTIPLE_CHOICE' OR v_q_type = 'TRUE_FALSE' OR v_q_type = 'IMAGE_QUESTION' OR v_q_type = 'CIRCUIT_QUESTION' THEN
+    v_is_correct := (lower(trim(both '"' from p_answer::text)) = lower(trim(both '"' from v_correct_answer::text)));
+    
+  ELSIF v_q_type = 'FILL_IN_THE_BLANK' THEN
+    IF jsonb_typeof(v_correct_answer) = 'array' THEN
+      SELECT EXISTS (
+        SELECT 1 FROM jsonb_array_elements_text(v_correct_answer) elem
+        WHERE lower(trim(both '"' from p_answer::text)) = lower(elem)
+      ) INTO v_is_correct;
+    ELSE
+      v_is_correct := (lower(trim(both '"' from p_answer::text)) = lower(trim(both '"' from v_correct_answer::text)));
+    END IF;
+    
+  ELSIF v_q_type = 'MULTI_SELECT' THEN
+    v_is_correct := (p_answer @> v_correct_answer AND p_answer <@ v_correct_answer);
+    
+  ELSIF v_q_type = 'ORDERING_QUESTION' THEN
+    IF v_correct_answer IS NOT NULL THEN
+      v_is_correct := (p_answer = v_correct_answer);
+    ELSE
+      v_is_correct := (p_answer = v_ordering_items);
+    END IF;
+    
+  ELSIF v_q_type = 'MATCHING_QUESTION' THEN
+    DECLARE
+      v_expected_map jsonb := '{}'::jsonb;
+      v_pair record;
+    BEGIN
+      FOR v_pair IN SELECT * FROM jsonb_to_recordset(v_matching_pairs) AS (leftId text, rightId text) LOOP
+        v_expected_map := jsonb_build_object(v_pair.leftId, v_pair.rightId) || v_expected_map;
+      END LOOP;
+      v_is_correct := (p_answer = v_expected_map);
+    END;
+    
+  ELSIF v_q_type = 'CALCULATION_QUESTION' THEN
+    DECLARE
+      v_user_val numeric;
+      v_correct_val numeric;
+    BEGIN
+      v_user_val := (trim(both '"' from p_answer::text))::numeric;
+      v_correct_val := (trim(both '"' from v_correct_answer::text))::numeric;
+      v_is_correct := (abs(v_user_val - v_correct_val) < 0.00001);
+    EXCEPTION WHEN OTHERS THEN
+      v_is_correct := false;
+    END;
+  END IF;
+
+  RETURN v_is_correct;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+-- 5. Re-declare grade_round_answer to support JOKER, SHIELD, and POINT_MULTIPLIER power-up logic
 CREATE OR REPLACE FUNCTION grade_round_answer()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -110,7 +175,6 @@ DECLARE
   v_time_bonus integer := 0;
   v_time_left_sec numeric;
   
-  -- Buzzer enhancements variables
   v_buzzer_type text;
   v_buzzer_presses jsonb;
   v_bid_amount integer := 100;
@@ -196,7 +260,12 @@ BEGIN
     
     -- Joker powerup doubles the score
     IF NEW.power_ups_used @> '"JOKER"'::jsonb THEN
-      v_multiplier := v_multiplier * 2;
+      v_multiplier := v_multiplier * 2.0;
+    END IF;
+
+    -- Point Multiplier powerup multiplies by 1.5
+    IF NEW.power_ups_used @> '"POINT_MULTIPLIER"'::jsonb THEN
+      v_multiplier := v_multiplier * 1.5;
     END IF;
 
     -- Adjust points based on buzzer type
@@ -263,12 +332,17 @@ BEGIN
         v_points_earned := 0;
       END IF;
     ELSE
-      -- Default buzzer penalty (Standard, Competitive, Captain, Relay, Consultation, Discussion): -30 if buzzed
+      -- Default buzzer penalty: -30 if buzzed
       IF (v_buzzed_player_id = NEW.user_id OR v_buzzer_type = 'TEAM_RELAY' OR v_buzzer_type = 'CAPTAIN') AND v_match_mode <> 'PRACTICE' THEN
         v_points_earned := -30;
       ELSE
         v_points_earned := 0;
       END IF;
+    END IF;
+
+    -- Shield powerup cancels wrong answer penalty
+    IF NEW.power_ups_used @> '"SHIELD"'::jsonb THEN
+      v_points_earned := 0;
     END IF;
 
     -- ── Competitive Buzzer: Reset buzzer on wrong answer ───────────
