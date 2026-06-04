@@ -1,3 +1,6 @@
 {
-  "rootDirectory": "apps/web"
+  "framework": "nextjs",
+  "installCommand": "npm install",
+  "buildCommand": "npm run build:shared && npm run build:web",
+  "outputDirectory": "apps/web/.next"
 }
