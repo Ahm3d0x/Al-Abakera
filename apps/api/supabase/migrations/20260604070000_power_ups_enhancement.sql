@@ -357,7 +357,7 @@ BEGIN
   IF (v_buzzer_type = 'HIDDEN' OR v_buzzer_type = 'AUCTION') AND v_is_fastest THEN
     UPDATE match_rounds
     SET buzzed_player_id = NEW.user_id, buzz_time_ms = (
-      SELECT (elem->>'time_ms')::numeric::integer FROM jsonb_array_elements(v_buzzer_presses) elem
+      SELECT (elem->>'time_ms')::numeric::bigint FROM jsonb_array_elements(v_buzzer_presses) elem
       WHERE (elem->>'user_id')::uuid = NEW.user_id LIMIT 1
     )
     WHERE id = NEW.round_id;
