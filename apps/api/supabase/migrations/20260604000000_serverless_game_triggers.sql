@@ -173,6 +173,7 @@ RETURNS TABLE (
   created_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ
 ) AS $$
+#variable_conflict use_column
 DECLARE
   v_code TEXT;
   v_chars TEXT := 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -213,3 +214,15 @@ BEGIN
   FROM rooms r WHERE r.id = v_room_id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================================
+-- 4. Sync Existing Auth Users to Profiles
+-- ============================================================
+INSERT INTO public.profiles (id, username, email)
+SELECT 
+  id, 
+  coalesce(raw_user_meta_data->>'username', 'player_' || left(id::text, 8)), 
+  email
+FROM auth.users
+ON CONFLICT (id) DO NOTHING;
+
