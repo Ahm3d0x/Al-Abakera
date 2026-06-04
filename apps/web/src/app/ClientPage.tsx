@@ -242,6 +242,16 @@ export default function ClientPage() {
   const [viewingLeaderboard, setViewingLeaderboard] = useState(false);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
 
+  const [gamingAlert, setGamingAlert] = useState<{ show: boolean; message: string; type?: 'info' | 'error' | 'warning' | 'success' }>({
+    show: false,
+    message: '',
+    type: 'info'
+  });
+
+  const triggerGamingAlert = (message: string, type: 'info' | 'error' | 'warning' | 'success' = 'info') => {
+    setGamingAlert({ show: true, message, type });
+  };
+
   // Configuration and Room States
   const [selectedMode, setSelectedMode] = useState<GameModeType>('FREE_FOR_ALL');
   const [selectedBuzzer, setSelectedBuzzer] = useState<BuzzerType>('STANDARD');
@@ -362,7 +372,10 @@ export default function ClientPage() {
     }
 
     if (userAns === null || userAns === undefined || (Array.isArray(userAns) && userAns.length === 0)) {
-      alert(isRtl ? 'من فضلك اختر أو اكتب إجابة أولاً!' : 'Please select or enter an answer first!');
+      triggerGamingAlert(
+        isRtl ? 'من فضلك اختر أو اكتب إجابة أولاً!' : 'Please select or enter an answer first!',
+        'warning'
+      );
       return;
     }
 
@@ -739,7 +752,7 @@ export default function ClientPage() {
       });
 
       if (!res.ok) {
-        alert('Failed to create room. Make sure API server is running.');
+        triggerGamingAlert('Failed to create room. Make sure API server is running.', 'error');
         return;
       }
 
@@ -762,7 +775,7 @@ export default function ClientPage() {
       }
     } catch (e) {
       console.error(e);
-      alert('Error connecting to the API server.');
+      triggerGamingAlert('Error connecting to the API server.', 'error');
     }
   };
 
@@ -786,7 +799,7 @@ export default function ClientPage() {
 
       const data = await res.json();
       if (!res.ok) {
-        alert(data.error || 'Failed to join room');
+        triggerGamingAlert(data.error || 'Failed to join room', 'error');
         return;
       }
 
@@ -809,7 +822,7 @@ export default function ClientPage() {
       }
     } catch (e) {
       console.error(e);
-      alert('Error joining room.');
+      triggerGamingAlert('Error joining room.', 'error');
     }
   };
 
@@ -1302,92 +1315,98 @@ export default function ClientPage() {
                     </button>
                   </div>
 
-                  <div style={styles.modesContainer}>
-                    <div style={styles.modeCard} onClick={() => startSoloGame('PRACTICE')}>
-                      <span style={styles.modeIcon}>⚗️</span>
-                      <div style={styles.modeMeta}>
-                        <h4 style={styles.modeTitle}>{t.soloPractice}</h4>
-                        <p style={styles.modeDesc}>{t.soloPracticeDesc}</p>
+                  {/* Scrollable middle container to prevent viewport overflow and ensure bottom nav visibility */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', flex: 1, minHeight: 0, margin: '12px 0', paddingRight: '4px' }}>
+                    <div style={styles.modesContainer}>
+                      <div style={styles.modeCard} onClick={() => startSoloGame('PRACTICE')}>
+                        <span style={styles.modeIcon}>⚗️</span>
+                        <div style={styles.modeMeta}>
+                          <h4 style={styles.modeTitle}>{t.soloPractice}</h4>
+                          <p style={styles.modeDesc}>{t.soloPracticeDesc}</p>
+                        </div>
+                      </div>
+
+                      <div style={styles.modeCard} onClick={() => startSoloGame('SURVIVAL')}>
+                        <span style={styles.modeIcon}>❤️</span>
+                        <div style={styles.modeMeta}>
+                          <h4 style={styles.modeTitle}>{t.survivalMode}</h4>
+                          <p style={styles.modeDesc}>{t.survivalModeDesc}</p>
+                        </div>
+                      </div>
+
+                      <div 
+                        style={{
+                          ...styles.modeCard,
+                          opacity: isDailyCompleted ? 0.75 : 1,
+                          borderColor: isDailyCompleted ? '#00ff87' : 'rgba(255, 255, 255, 0.04)'
+                        }} 
+                        onClick={() => {
+                          if (isDailyCompleted) {
+                            triggerGamingAlert(
+                              isRtl ? 'لقد أنجزت هذا التحدي اليوم بالفعل!' : 'You have already completed this challenge today!',
+                              'info'
+                            );
+                            return;
+                          }
+                          startSoloGame('DAILY_CHALLENGE');
+                        }}
+                      >
+                        <span style={styles.modeIcon}>📅</span>
+                        <div style={styles.modeMeta}>
+                          <h4 style={styles.modeTitle}>
+                            {isRtl ? 'التحدي اليومي' : 'Daily Challenge'}
+                            {isDailyCompleted && <span style={{ color: '#00ff87', marginLeft: '6px', fontSize: '0.8rem' }}>✓</span>}
+                          </h4>
+                          <p style={styles.modeDesc}>
+                            {isDailyCompleted 
+                              ? (isRtl ? 'تم إنجازه بنجاح! +50 🪙 مكافأة' : 'Successfully completed! +50 🪙 bonus')
+                              : (isRtl ? 'تحدي يومي فريد بنفس الأسئلة للجميع ومكافأة مضاعفة' : 'Unique daily challenge with double rewards')}
+                          </p>
+                        </div>
                       </div>
                     </div>
 
-                    <div style={styles.modeCard} onClick={() => startSoloGame('SURVIVAL')}>
-                      <span style={styles.modeIcon}>❤️</span>
-                      <div style={styles.modeMeta}>
-                        <h4 style={styles.modeTitle}>{t.survivalMode}</h4>
-                        <p style={styles.modeDesc}>{t.survivalModeDesc}</p>
+                    <div style={styles.multiplayerBox}>
+                      <h3 style={styles.multiTitle}>{t.multiplayer}</h3>
+                      <p style={styles.multiDesc}>{t.multiplayerDesc}</p>
+                      
+                      <div style={styles.btnRow}>
+                        <button style={styles.cyberBtn} onClick={createRoom}>
+                          {t.createRoomBtn}
+                        </button>
                       </div>
-                    </div>
 
-                    <div 
-                      style={{
-                        ...styles.modeCard,
-                        opacity: isDailyCompleted ? 0.75 : 1,
-                        borderColor: isDailyCompleted ? '#00ff87' : 'rgba(255, 255, 255, 0.04)'
-                      }} 
-                      onClick={() => {
-                        if (isDailyCompleted) {
-                          alert(isRtl ? 'لقد أنجزت هذا التحدي اليوم بالفعل!' : 'You have already completed this challenge today!');
-                          return;
-                        }
-                        startSoloGame('DAILY_CHALLENGE');
-                      }}
-                    >
-                      <span style={styles.modeIcon}>📅</span>
-                      <div style={styles.modeMeta}>
-                        <h4 style={styles.modeTitle}>
-                          {isRtl ? 'التحدي اليومي' : 'Daily Challenge'}
-                          {isDailyCompleted && <span style={{ color: '#00ff87', marginLeft: '6px', fontSize: '0.8rem' }}>✓</span>}
-                        </h4>
-                        <p style={styles.modeDesc}>
-                          {isDailyCompleted 
-                            ? (isRtl ? 'تم إنجازه بنجاح! +50 🪙 مكافأة' : 'Successfully completed! +50 🪙 bonus')
-                            : (isRtl ? 'تحدي يومي فريد بنفس الأسئلة للجميع ومكافأة مضاعفة' : 'Unique daily challenge with double rewards')}
-                        </p>
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        marginBottom: '10px',
+                        fontSize: '0.8rem',
+                        color: '#8a93c0',
+                        cursor: 'pointer'
+                      }} onClick={() => setIsSpectatorJoin(!isSpectatorJoin)}>
+                        <input
+                          type="checkbox"
+                          checked={isSpectatorJoin}
+                          onChange={(e) => setIsSpectatorJoin(e.target.checked)}
+                          style={{ cursor: 'pointer' }}
+                        />
+                        <span>{isRtl ? 'الانضمام كمتفرج (رؤية فقط)' : 'Join as Spectator (Watch only)'}</span>
                       </div>
-                    </div>
-                  </div>
 
-                  <div style={styles.multiplayerBox}>
-                    <h3 style={styles.multiTitle}>{t.multiplayer}</h3>
-                    <p style={styles.multiDesc}>{t.multiplayerDesc}</p>
-                    
-                    <div style={styles.btnRow}>
-                      <button style={styles.cyberBtn} onClick={createRoom}>
-                        {t.createRoomBtn}
-                      </button>
-                    </div>
-
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      marginBottom: '10px',
-                      fontSize: '0.8rem',
-                      color: '#8a93c0',
-                      cursor: 'pointer'
-                    }} onClick={() => setIsSpectatorJoin(!isSpectatorJoin)}>
-                      <input
-                        type="checkbox"
-                        checked={isSpectatorJoin}
-                        onChange={(e) => setIsSpectatorJoin(e.target.checked)}
-                        style={{ cursor: 'pointer' }}
-                      />
-                      <span>{isRtl ? 'الانضمام كمتفرج (رؤية فقط)' : 'Join as Spectator (Watch only)'}</span>
-                    </div>
-
-                    <div style={styles.inputJointRow}>
-                      <input 
-                        style={styles.jointInput} 
-                        type="text" 
-                        placeholder={t.enterCode}
-                        value={roomCodeInput}
-                        onChange={(e) => setRoomCodeInput(e.target.value)}
-                      />
-                      <button style={styles.cyberOutlineBtn} onClick={joinRoomByCode}>
-                        {t.joinRoomBtn}
-                      </button>
+                      <div style={styles.inputJointRow}>
+                        <input 
+                          style={styles.jointInput} 
+                          type="text" 
+                          placeholder={t.enterCode}
+                          value={roomCodeInput}
+                          onChange={(e) => setRoomCodeInput(e.target.value)}
+                        />
+                        <button style={styles.cyberOutlineBtn} onClick={joinRoomByCode}>
+                          {t.joinRoomBtn}
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -2195,6 +2214,44 @@ export default function ClientPage() {
             </div>
           </div>
         )}
+
+        {/* CUSTOM GAMING ALERT POPUP */}
+        {gamingAlert.show && (() => {
+          const alertColor = 
+            gamingAlert.type === 'error' ? '#ff3b5c' : 
+            gamingAlert.type === 'warning' ? '#ffb800' : 
+            gamingAlert.type === 'success' ? '#00ff87' : '#00f2fe';
+
+          const alertBgGradient = 
+            gamingAlert.type === 'error' ? 'linear-gradient(135deg, #ff3b5c 0%, #ff8a9a 100%)' : 
+            gamingAlert.type === 'warning' ? 'linear-gradient(135deg, #ffb800 0%, #ffd066 100%)' : 
+            gamingAlert.type === 'success' ? 'linear-gradient(135deg, #00ff87 0%, #66ffb3 100%)' : 
+            'linear-gradient(135deg, #00f2fe 0%, #4facfe 100%)';
+
+          return (
+            <div style={customStyles.alertOverlay}>
+              <div style={{ ...customStyles.alertBox, border: `2px solid ${alertColor}`, boxShadow: `0 0 20px ${alertColor}40, inset 0 0 10px ${alertColor}15` }}>
+                <div style={customStyles.alertHeader}>
+                  <span style={{ ...customStyles.alertTitle, color: alertColor }}>
+                    {gamingAlert.type === 'error' ? (isRtl ? '⚠️ خطأ في النظام' : '⚠️ SYSTEM ERROR') : 
+                     gamingAlert.type === 'warning' ? (isRtl ? '⚡ تنبيه هام' : '⚡ ALERT') : 
+                     gamingAlert.type === 'success' ? (isRtl ? '🏆 إنجاز جديد' : '🏆 SUCCESS') : 
+                     (isRtl ? '📢 تنبيه النظام' : '📢 SYSTEM NOTIFICATION')}
+                  </span>
+                </div>
+                <div style={customStyles.alertBody}>
+                  <p style={customStyles.alertMessage}>{gamingAlert.message}</p>
+                </div>
+                <button 
+                  style={{ ...customStyles.alertBtn, background: alertBgGradient, boxShadow: `0 4px 12px ${alertColor}40` }} 
+                  onClick={() => { playSFX('click'); setGamingAlert(prev => ({ ...prev, show: false })); }}
+                >
+                  {isRtl ? 'حسناً' : 'OK'}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
 
       </div>
     </div>
@@ -3169,5 +3226,67 @@ const styles: { [key: string]: React.CSSProperties } = {
     borderRadius: '8px',
     cursor: 'pointer',
     fontSize: '0.95rem'
+  }
+};
+
+const customStyles: { [key: string]: React.CSSProperties } = {
+  alertOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'rgba(5, 6, 15, 0.85)',
+    backdropFilter: 'blur(8px)',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+    padding: '24px',
+    boxSizing: 'border-box'
+  },
+  alertBox: {
+    width: '100%',
+    maxWidth: '360px',
+    backgroundColor: '#111528',
+    borderRadius: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    boxSizing: 'border-box'
+  },
+  alertHeader: {
+    padding: '14px 16px',
+    background: 'linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0%, transparent 100%)',
+    borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+    display: 'flex',
+    alignItems: 'center'
+  },
+  alertTitle: {
+    fontSize: '0.85rem',
+    fontWeight: 800,
+    letterSpacing: '1px'
+  },
+  alertBody: {
+    padding: '24px 20px',
+    textAlign: 'center'
+  },
+  alertMessage: {
+    fontSize: '0.95rem',
+    color: '#f0f4ff',
+    fontWeight: 600,
+    lineHeight: '1.5',
+    margin: 0
+  },
+  alertBtn: {
+    margin: '0 20px 20px 20px',
+    padding: '12px',
+    border: 'none',
+    color: '#05060f',
+    fontWeight: 900,
+    borderRadius: '8px',
+    cursor: 'pointer',
+    fontSize: '0.9rem',
+    transition: 'all 0.15s ease'
   }
 };
