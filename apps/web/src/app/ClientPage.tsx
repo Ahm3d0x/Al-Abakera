@@ -366,6 +366,7 @@ export default function ClientPage() {
   const [answerSubmitted, setAnswerSubmitted] = useState(false);
   const [isAnswerCorrect, setIsAnswerCorrect] = useState<boolean | null>(null);
   const [revealedCorrectAnswer, setRevealedCorrectAnswer] = useState<any>(null);
+  const [submittedAnswers, setSubmittedAnswers] = useState<{ [userId: string]: any }>({});
   
   // Chat and Signaling states
   const [chatInput, setChatInput] = useState('');
@@ -416,9 +417,23 @@ export default function ClientPage() {
         triggerVibrate([200, 100, 200]);
         setScreen('cinematic');
       },
-      onRoundStart: (data) => {
+      onRoundStart: async (data) => {
         setGameMode(currentRoom?.config?.mode || 'FREE_FOR_ALL');
         activeRoundRef.current = { id: data.roundId, started_at: Date.now() };
+        setSubmittedAnswers({});
+
+        const { data: existingAnswers } = await supabase
+          .from('round_answers')
+          .select('*')
+          .eq('round_id', data.roundId);
+
+        if (existingAnswers) {
+          const mapped: any = {};
+          existingAnswers.forEach((ans: any) => {
+            mapped[ans.user_id] = ans;
+          });
+          setSubmittedAnswers(mapped);
+        }
         
         setGameQuestions((prev) => {
           const list = [...prev];
@@ -486,10 +501,16 @@ export default function ClientPage() {
           }
         }
       },
-      onGameEnded: (data) => {
+      onGameEnded: () => {
         playSFX('slam');
         setScreen('summary');
         refreshProfile();
+      },
+      onAnswerSubmitted: (data: any) => {
+        setSubmittedAnswers(prev => ({
+          ...prev,
+          [data.user_id]: data
+        }));
       },
       onPowerUpUsed: (data) => {
         const oppName = participants.find(p => p.userId === data.userId)?.username || (isRtl ? 'الخصم' : 'Opponent');
@@ -627,7 +648,7 @@ export default function ClientPage() {
     return false;
   }
 
-  async function submitAnswer() {
+  async function handleSubmitAnswer() {
     playSFX('click');
     const q = gameQuestions[currentQIndex];
     let userAns: any = null;
@@ -648,7 +669,7 @@ export default function ClientPage() {
       } else {
         userAns = selectedOption;
       }
-    } else if (q.type === 'FILL_IN_THE_BLANK' || q.type === 'CALCULATION_QUESTION' || q.type === 'CODING_QUESTION') {
+    } else if (q.type === 'FILL_IN_THE_BLANK' || q.type === 'CALCULATION_QUESTION' || q.type === 'CODING_QUESTION' || q.type === 'SHORT_ANSWER') {
       userAns = textAnswer.trim();
     } else if (q.type === 'MULTI_SELECT') {
       userAns = selectedOption || [];
@@ -795,6 +816,7 @@ export default function ClientPage() {
     setIsBuzzed(false);
     setSelectedOption(null);
     setTextAnswer('');
+    setSubmittedAnswers({});
     setMatchingSelections({});
     setActiveLeftTerm(null);
     setAnswerSubmitted(false);
@@ -1560,7 +1582,6 @@ export default function ClientPage() {
   const activatePowerUp = async (type: string) => {
     if (activePowerUps.includes(type)) return;
     
-    const bt = currentRoom?.config?.buzzerType || 'STANDARD';
     const q = gameQuestions[currentQIndex];
 
     // Steal logic
@@ -2275,6 +2296,34 @@ export default function ClientPage() {
                     </select>
                   </div>
 
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <label style={{ fontSize: '0.65rem', color: '#8a93c0', fontWeight: 700 }}>
+                      {isRtl ? 'حكم المباراة' : 'MATCH JUDGE'}
+                    </label>
+                    <select
+                      value={currentRoom.config?.judgeId || ''}
+                      onChange={(e) => updateRoomConfig({ judgeId: e.target.value || null })}
+                      style={{
+                        backgroundColor: '#0b0d1a',
+                        color: '#ffffff',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: '4px',
+                        padding: '4px 6px',
+                        fontSize: '0.8rem',
+                        outline: 'none'
+                      }}
+                    >
+                      <option value="">{isRtl ? 'تلقائي (بدون حكم)' : 'Automatic (No Judge)'}</option>
+                      {participants
+                        .filter(p => !p.isSpectator && p.userId !== user?.id)
+                        .map(p => (
+                          <option key={p.userId} value={p.userId}>{p.username}</option>
+                        ))
+                      }
+                      <option value={user?.id}>{isRtl ? 'أنت (حكم فقط)' : 'You (Judge Only)'}</option>
+                    </select>
+                  </div>
+
                   <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '8px' }}>
                     <span style={{ fontSize: '0.75rem', color: '#8a93c0' }}>{isRtl ? 'رمز الغرفة:' : 'Room Code:'}</span>
                     <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#00f2fe' }} className="text-glow-accent">
@@ -2312,6 +2361,17 @@ export default function ClientPage() {
                       })()}
                     </span>
                   </div>
+                  <div style={styles.paramItem}>
+                    <span style={styles.paramLabel}>{isRtl ? 'حكم المباراة:' : 'Judge:'}</span>
+                    <span style={styles.paramVal}>
+                      {(() => {
+                        const jId = currentRoom.config?.judgeId;
+                        if (!jId) return isRtl ? 'تلقائي' : 'Automatic';
+                        const jUser = participants.find(p => p.userId === jId);
+                        return jUser ? jUser.username : (isRtl ? 'حكم' : 'Judge');
+                      })()}
+                    </span>
+                  </div>
                 </div>
               )}
 
@@ -2335,7 +2395,7 @@ export default function ClientPage() {
                       </h3>
                       
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
-                        {participants.filter(p => !p.isSpectator && p.teamId === 'team_a').map((player) => (
+                        {participants.filter(p => !p.isSpectator && p.teamId === 'team_a' && p.userId !== currentRoom.config?.judgeId).map((player) => (
                           <div key={player.userId} style={{
                             display: 'flex',
                             justifyContent: 'space-between',
@@ -2389,7 +2449,7 @@ export default function ClientPage() {
                       </h3>
 
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
-                        {participants.filter(p => !p.isSpectator && p.teamId === 'team_b').map((player) => (
+                        {participants.filter(p => !p.isSpectator && p.teamId === 'team_b' && p.userId !== currentRoom.config?.judgeId).map((player) => (
                           <div key={player.userId} style={{
                             display: 'flex',
                             justifyContent: 'space-between',
@@ -2429,7 +2489,7 @@ export default function ClientPage() {
                   </div>
 
                   {/* UNASSIGNED PLAYERS */}
-                  {participants.filter(p => !p.isSpectator && p.teamId !== 'team_a' && p.teamId !== 'team_b').length > 0 && (
+                  {participants.filter(p => !p.isSpectator && p.teamId !== 'team_a' && p.teamId !== 'team_b' && p.userId !== currentRoom.config?.judgeId).length > 0 && (
                     <div style={{
                       padding: '8px 12px',
                       backgroundColor: 'rgba(255,255,255,0.02)',
@@ -2442,7 +2502,7 @@ export default function ClientPage() {
                       alignItems: 'center'
                     }}>
                       <span>{isRtl ? 'لاعبون غير معينين:' : 'Unassigned:'}</span>
-                      {participants.filter(p => !p.isSpectator && p.teamId !== 'team_a' && p.teamId !== 'team_b').map(p => (
+                      {participants.filter(p => !p.isSpectator && p.teamId !== 'team_a' && p.teamId !== 'team_b' && p.userId !== currentRoom.config?.judgeId).map(p => (
                         <span key={p.userId} style={{
                           padding: '2px 6px',
                           backgroundColor: 'rgba(255,255,255,0.04)',
@@ -2455,7 +2515,7 @@ export default function ClientPage() {
                 </div>
               ) : (
                 <div style={styles.participantsGrid}>
-                  {participants.filter(p => !p.isSpectator).map((player) => (
+                  {participants.filter(p => !p.isSpectator && p.userId !== currentRoom.config?.judgeId).map((player) => (
                     <div key={player.userId} style={styles.playerCard}>
                       <div style={styles.playerMetaLeft}>
                         <div style={styles.avatarCircleMock}>👤</div>
@@ -2476,11 +2536,46 @@ export default function ClientPage() {
                     </div>
                   ))}
                   
-                  {participants.filter(p => !p.isSpectator).length < 2 && (
+                  {participants.filter(p => !p.isSpectator && p.userId !== currentRoom.config?.judgeId).length < 2 && (
                     <div style={styles.playerCardDashed}>
                       <span style={styles.dashText}>{t.waitingPlayers}</span>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* JUDGE ROW */}
+              {currentRoom.config?.judgeId && (
+                <div style={{
+                  padding: '10px 14px',
+                  backgroundColor: 'rgba(255, 215, 0, 0.02)',
+                  border: '1px solid rgba(255, 215, 0, 0.08)',
+                  borderRadius: '8px',
+                  margin: '10px 0',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '1.0rem' }}>⚖️</span>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#ffcc00' }}>
+                      {isRtl ? 'حكم المباراة:' : 'Match Judge:'}
+                    </span>
+                    <span style={{ fontSize: '0.8rem', color: '#ffffff' }}>
+                      {participants.find(p => p.userId === currentRoom.config?.judgeId)?.username || (isRtl ? 'جاري التعيين...' : 'Assigning...')}
+                    </span>
+                  </div>
+                  <span style={{
+                    fontSize: '0.65rem',
+                    color: '#ffcc00',
+                    border: '1px solid #ffcc00',
+                    borderRadius: '4px',
+                    padding: '2px 6px',
+                    fontWeight: 700,
+                    textTransform: 'uppercase'
+                  }}>
+                    {isRtl ? 'حكم' : 'JUDGE'}
+                  </span>
                 </div>
               )}
 
@@ -2845,6 +2940,274 @@ export default function ClientPage() {
             }
           }
 
+          const isJudge = currentRoom?.config?.judgeId === user?.id;
+
+          if (isJudge) {
+            return (
+              <div style={styles.screenContainer}>
+                {/* HUD Bar */}
+                <div style={styles.hudBar}>
+                  <div style={styles.hudTeamPanel}>
+                    <span style={styles.hudTeamName}>{leftTeamName}</span>
+                    <span style={styles.hudTeamScore}>{leftTeamScore} pts</span>
+                  </div>
+
+                  <div style={styles.hudTimerPanel}>
+                    <div style={{
+                      ...styles.timerCircularRing,
+                      borderColor: timeLeft <= 5 ? '#ff3b5c' : '#ffcc00',
+                      color: '#ffcc00',
+                      boxShadow: '0 0 10px rgba(255, 204, 0, 0.2)'
+                    }}>
+                      {timeLeft}
+                    </div>
+                    <span style={styles.hudRoundCounter}>{t.round} {currentQIndex + 1}/{gameQuestions.length}</span>
+                  </div>
+
+                  <div style={{ ...styles.hudTeamPanel, alignItems: 'flex-end' }}>
+                    <span style={styles.hudTeamName}>{rightTeamName}</span>
+                    <span style={styles.hudTeamScore}>{rightTeamScore} pts</span>
+                  </div>
+                </div>
+
+                {/* Question Info */}
+                <div style={{
+                  ...styles.questionZone,
+                  border: '1px solid rgba(255, 204, 0, 0.15)',
+                  boxShadow: '0 0 15px rgba(255, 204, 0, 0.03)',
+                  flex: '0 0 auto'
+                }}>
+                  <div style={styles.qHeaderRow}>
+                    <span style={{ ...styles.categoryBadge, backgroundColor: 'rgba(255, 204, 0, 0.1)', color: '#ffcc00', border: '1px solid rgba(255, 204, 0, 0.2)' }}>
+                      ⚖️ {isRtl ? 'حكم' : 'JUDGE'} · {gameQuestions[currentQIndex].category}
+                    </span>
+                    <span style={styles.difficultyBadge}>{gameQuestions[currentQIndex].difficulty}</span>
+                  </div>
+                  
+                  <div style={styles.qTextBody}>
+                    {gameQuestions[currentQIndex].body}
+                  </div>
+                  
+                  {gameQuestions[currentQIndex].correctAnswer && (
+                    <div style={{
+                      marginTop: '10px',
+                      fontSize: '0.75rem',
+                      color: '#00ff87',
+                      backgroundColor: 'rgba(0, 255, 135, 0.04)',
+                      padding: '6px 10px',
+                      borderRadius: '4px',
+                      border: '1px dashed rgba(0, 255, 135, 0.2)'
+                    }}>
+                      💡 {isRtl ? 'الإجابة المرجعية: ' : 'Reference Answer: '} 
+                      <strong>{String(gameQuestions[currentQIndex].correctAnswer)}</strong>
+                    </div>
+                  )}
+                </div>
+
+                {/* Submissions Section */}
+                <div style={{
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                  overflowY: 'auto',
+                  padding: '10px 0',
+                  scrollbarWidth: 'none'
+                }}>
+                  <h3 style={{ fontSize: '0.8rem', color: '#ffcc00', margin: '0 0 4px 0', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    👥 {isRtl ? 'إجابات اللاعبين' : 'Player Submissions'}
+                  </h3>
+
+                  {participants
+                    .filter(p => !p.isSpectator && p.userId !== currentRoom.config?.judgeId)
+                    .map((player) => {
+                      const submission = submittedAnswers[player.userId];
+                      const isSubmitted = !!submission;
+                      
+                      return (
+                        <div key={player.userId} style={{
+                          padding: '10px 14px',
+                          backgroundColor: 'rgba(11, 13, 26, 0.6)',
+                          border: `1px solid ${isSubmitted ? 'rgba(0, 245, 255, 0.15)' : 'rgba(255,255,255,0.05)'}`,
+                          borderRadius: '8px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '8px'
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#ffffff' }}>
+                              {player.username} {player.teamId === 'team_a' ? '💙 (A)' : player.teamId === 'team_b' ? '💖 (B)' : ''}
+                            </span>
+                            <span style={{
+                              fontSize: '0.65rem',
+                              color: isSubmitted ? '#00ff87' : '#ffb300',
+                              backgroundColor: isSubmitted ? 'rgba(0, 255, 135, 0.05)' : 'rgba(255, 179, 0, 0.05)',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              fontWeight: 700
+                            }}>
+                              {isSubmitted ? (isRtl ? 'أرسل الإجابة' : 'SUBMITTED') : (isRtl ? 'يفكر...' : 'THINKING...')}
+                            </span>
+                          </div>
+
+                          {isSubmitted ? (
+                            <div style={{
+                              padding: '8px',
+                              backgroundColor: 'rgba(255,255,255,0.02)',
+                              borderRadius: '4px',
+                              fontSize: '0.8rem',
+                              color: '#f0f4ff',
+                              borderLeft: `2px solid ${submission.is_correct ? '#00ff87' : '#ff3b5c'}`
+                            }}>
+                              {isRtl ? 'الإجابة المكتوبة: ' : 'Submitted Answer: '}
+                              <strong style={{ color: '#00f5ff' }}>{String(submission.answer)}</strong>
+                              <span style={{ fontSize: '0.7rem', color: '#8a93c0', display: 'block', marginTop: '4px' }}>
+                                ⏱ {isRtl ? 'الوقت المستغرق: ' : 'Time spent: '} {(submission.time_spent_ms / 1000).toFixed(1)}s
+                              </span>
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: '0.75rem', color: '#3d4470', fontStyle: 'italic', padding: '4px 0' }}>
+                              {isRtl ? 'في انتظار الإرسال...' : 'Waiting for answer submission...'}
+                            </div>
+                          )}
+
+                          {/* Grading & Adjustments (Only active when player has submitted) */}
+                          <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                            <button
+                              disabled={!isSubmitted}
+                              onClick={async () => {
+                                playSFX('correct');
+                                if (submission && gameSyncRef.current) {
+                                  await gameSyncRef.current.judgeAnswer(submission.id, true, 100);
+                                }
+                              }}
+                              style={{
+                                flex: 1,
+                                padding: '6px 12px',
+                                backgroundColor: (isSubmitted && submission.is_correct) ? '#00ff87' : 'rgba(0, 255, 135, 0.1)',
+                                border: `1px solid ${isSubmitted ? '#00ff87' : 'rgba(0, 255, 135, 0.2)'}`,
+                                borderRadius: '4px',
+                                color: (isSubmitted && submission.is_correct) ? '#05060f' : '#00ff87',
+                                fontSize: '0.75rem',
+                                fontWeight: 700,
+                                cursor: isSubmitted ? 'pointer' : 'not-allowed',
+                                opacity: isSubmitted ? 1 : 0.4
+                              }}
+                            >
+                              ✓ {isRtl ? 'موافقة (+100)' : 'Approve (+100)'}
+                            </button>
+                            <button
+                              disabled={!isSubmitted}
+                              onClick={async () => {
+                                playSFX('wrong');
+                                if (submission && gameSyncRef.current) {
+                                  await gameSyncRef.current.judgeAnswer(submission.id, false, -30);
+                                }
+                              }}
+                              style={{
+                                flex: 1,
+                                padding: '6px 12px',
+                                backgroundColor: (isSubmitted && !submission.is_correct && submission.points_earned !== 0) ? '#ff3b5c' : 'rgba(255, 59, 92, 0.1)',
+                                border: `1px solid ${isSubmitted ? '#ff3b5c' : 'rgba(255, 59, 92, 0.2)'}`,
+                                borderRadius: '4px',
+                                color: (isSubmitted && !submission.is_correct && submission.points_earned !== 0) ? '#ffffff' : '#ff3b5c',
+                                fontSize: '0.75rem',
+                                fontWeight: 700,
+                                cursor: isSubmitted ? 'pointer' : 'not-allowed',
+                                opacity: isSubmitted ? 1 : 0.4
+                              }}
+                            >
+                              ✗ {isRtl ? 'رفض (-30)' : 'Reject (-30)'}
+                            </button>
+                          </div>
+
+                          {/* Score Adjustment Input */}
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '2px' }}>
+                            <input
+                              type="number"
+                              id={`adjust-${player.userId}`}
+                              placeholder={isRtl ? 'تعديل النقاط...' : 'Adjust score (e.g. +50)...'}
+                              style={{
+                                flex: 1,
+                                padding: '4px 8px',
+                                backgroundColor: '#0b0d1a',
+                                border: '1px solid rgba(255,255,255,0.08)',
+                                borderRadius: '4px',
+                                fontSize: '0.75rem',
+                                color: '#ffffff',
+                                outline: 'none'
+                              }}
+                            />
+                            <button
+                              onClick={async () => {
+                                const input = document.getElementById(`adjust-${player.userId}`) as HTMLInputElement;
+                                const val = parseInt(input?.value || '0');
+                                if (val !== 0 && gameSyncRef.current) {
+                                  playSFX('click');
+                                  const ok = await gameSyncRef.current.adjustScore(player.userId, val);
+                                  if (ok) {
+                                    triggerGamingAlert(isRtl ? `تم تعديل النقاط بمقدار ${val}` : `Adjusted score by ${val}`, 'success');
+                                    if (input) input.value = '';
+                                  }
+                                }
+                              }}
+                              style={{
+                                padding: '4px 10px',
+                                backgroundColor: 'rgba(255, 215, 0, 0.15)',
+                                border: '1px solid #ffcc00',
+                                borderRadius: '4px',
+                                color: '#ffcc00',
+                                fontSize: '0.75rem',
+                                fontWeight: 700,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              {isRtl ? 'تطبيق' : 'Apply'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+
+                {/* Judge Controls Footer */}
+                <div style={{
+                  padding: '10px 0',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px'
+                }}>
+                  <button
+                    onClick={async () => {
+                      playSFX('slam');
+                      if (gameSyncRef.current && activeRoundRef.current) {
+                        const ok = await gameSyncRef.current.endRoundManually(activeRoundRef.current.id);
+                        if (ok) {
+                          triggerGamingAlert(isRtl ? 'تم إنهاء الجولة بنجاح!' : 'Round ended successfully!', 'success');
+                        }
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '14px',
+                      backgroundColor: '#ffcc00',
+                      border: 'none',
+                      borderRadius: '8px',
+                      color: '#111528',
+                      fontSize: '0.9rem',
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      boxShadow: '0 0 15px rgba(255, 204, 0, 0.3)',
+                      textAlign: 'center'
+                    }}
+                  >
+                    ⏹ {isRtl ? 'إنهاء الجولة يدوياً' : 'END ROUND MANUALLY'}
+                  </button>
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div style={styles.screenContainer}>
               {/* FLOATING QUICK SIGNAL OVERLAY */}
@@ -3114,7 +3477,8 @@ export default function ClientPage() {
                 )}
 
                 {(gameQuestions[currentQIndex].type === 'FILL_IN_THE_BLANK' ||
-                  gameQuestions[currentQIndex].type === 'CALCULATION_QUESTION') && (
+                  gameQuestions[currentQIndex].type === 'CALCULATION_QUESTION' ||
+                  gameQuestions[currentQIndex].type === 'SHORT_ANSWER') && (
                   <div style={styles.blankInputWrapper}>
                     <input
                       style={styles.blankInputField}
@@ -3431,7 +3795,7 @@ export default function ClientPage() {
 
                     {/* Answering State */}
                     {(!buzzerActive || (isBuzzed && buzzedUser === user?.username)) && !answerSubmitted && (
-                      <button style={styles.submitAnsBtn} onClick={submitAnswer}>
+                      <button style={styles.submitAnsBtn} onClick={handleSubmitAnswer}>
                         {t.submitBtn}
                       </button>
                     )}

@@ -125,6 +125,9 @@ interface ActiveMatch {
 
 const activeMatches = new Map<string, ActiveMatch>();
 
+// Grace period timers for disconnected players (userId -> timeout)
+const disconnectTimers = new Map<string, NodeJS.Timeout>();
+
 // 10 Fallback sample questions in case database questions is empty
 const BACKEND_SAMPLE_QUESTIONS: Question[] = [
   {
@@ -364,6 +367,48 @@ async function endMatch(roomId: string) {
 }
 
 // ==========================================
+// Full Disconnect Cleanup (used by grace period expiry and lobby disconnects)
+// ==========================================
+async function performFullDisconnect(roomId: string, userId: string) {
+  try {
+    await supabaseAdmin
+      .from('room_participants')
+      .delete()
+      .eq('room_id', roomId)
+      .eq('user_id', userId);
+
+    const { data: remaining } = await supabaseAdmin
+      .from('room_participants')
+      .select('user_id, is_host')
+      .eq('room_id', roomId);
+
+    if (!remaining || remaining.length === 0) {
+      // Clear active matches if any
+      const match = activeMatches.get(roomId);
+      if (match) {
+        if (match.timerInterval) clearInterval(match.timerInterval);
+        activeMatches.delete(roomId);
+      }
+      await supabaseAdmin.from('rooms').delete().eq('id', roomId);
+    } else {
+      const hostStillPresent = remaining.some((r: any) => r.is_host);
+      if (!hostStillPresent) {
+        const newHostId = remaining[0].user_id;
+        await supabaseAdmin.from('rooms').update({ host_id: newHostId }).eq('id', roomId);
+        await supabaseAdmin
+          .from('room_participants')
+          .update({ is_host: true, is_ready: true })
+          .eq('room_id', roomId)
+          .eq('user_id', newHostId);
+      }
+      await broadcastRoomState(roomId);
+    }
+  } catch (err) {
+    console.error('[Socket] Full disconnect cleanup error:', err);
+  }
+}
+
+// ==========================================
 // WebSocket Connection Handlers
 // ==========================================
 io.use(async (socket, next) => {
@@ -397,6 +442,39 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     socket.data.roomId = roomId;
     console.log(`[Socket] ${username} (${socket.id}) joined room ${roomId}`);
+
+    // Cancel any pending disconnect grace timer for this user
+    const timerKey = `${roomId}:${userId}`;
+    if (disconnectTimers.has(timerKey)) {
+      clearTimeout(disconnectTimers.get(timerKey)!);
+      disconnectTimers.delete(timerKey);
+      console.log(`[Socket] Reconnection: cancelled grace timer for ${userId} in room ${roomId}`);
+    }
+
+    // Check if user already has a participant row (reconnection scenario)
+    if (userId) {
+      try {
+        const { data: existing } = await supabaseAdmin
+          .from('room_participants')
+          .select('user_id, disconnected_at')
+          .eq('room_id', roomId)
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (existing) {
+          // Clear disconnected_at to mark them as back online
+          await supabaseAdmin
+            .from('room_participants')
+            .update({ disconnected_at: null })
+            .eq('room_id', roomId)
+            .eq('user_id', userId);
+          console.log(`[Socket] Reconnected: ${userId} restored in room ${roomId}`);
+        }
+      } catch (err) {
+        console.error('[Socket] Reconnection check error:', err);
+      }
+    }
+
     await broadcastRoomState(roomId);
   });
 
@@ -670,41 +748,36 @@ io.on('connection', (socket) => {
     console.log(`[Socket] User disconnected: ${socket.id} (${email})`);
 
     if (roomId && userId) {
-      try {
-        await supabaseAdmin
-          .from('room_participants')
-          .delete()
-          .eq('room_id', roomId)
-          .eq('user_id', userId);
+      const timerKey = `${roomId}:${userId}`;
 
-        const { data: remaining } = await supabaseAdmin
-          .from('room_participants')
-          .select('user_id, is_host')
-          .eq('room_id', roomId);
-
-        if (!remaining || remaining.length === 0) {
-          // Clear active matches if any
-          const match = activeMatches.get(roomId);
-          if (match) {
-            if (match.timerInterval) clearInterval(match.timerInterval);
-            activeMatches.delete(roomId);
-          }
-          await supabaseAdmin.from('rooms').delete().eq('id', roomId);
-        } else {
-          const hostStillPresent = remaining.some((r: any) => r.is_host);
-          if (!hostStillPresent) {
-            const newHostId = remaining[0].user_id;
-            await supabaseAdmin.from('rooms').update({ host_id: newHostId }).eq('id', roomId);
-            await supabaseAdmin
-              .from('room_participants')
-              .update({ is_host: true, is_ready: true })
-              .eq('room_id', roomId)
-              .eq('user_id', newHostId);
-          }
-          await broadcastRoomState(roomId);
+      // Check if a match is currently active — if so, use a 30s grace period
+      const match = activeMatches.get(roomId);
+      if (match && match.status === 'ACTIVE') {
+        // Mark player as disconnected in DB but don't remove them yet
+        try {
+          await supabaseAdmin
+            .from('room_participants')
+            .update({ disconnected_at: new Date().toISOString() })
+            .eq('room_id', roomId)
+            .eq('user_id', userId);
+          console.log(`[Socket] Grace period started (30s) for ${userId} in room ${roomId}`);
+        } catch (err) {
+          console.error('[Socket] Grace period mark error:', err);
         }
-      } catch (err) {
-        console.error('[Socket] Disconnect cleanup error:', err);
+
+        await broadcastRoomState(roomId);
+
+        // Set a 30s timer — if they don't reconnect, then fully remove them
+        const graceTimer = setTimeout(async () => {
+          disconnectTimers.delete(timerKey);
+          console.log(`[Socket] Grace period expired for ${userId} in room ${roomId}. Removing.`);
+          await performFullDisconnect(roomId, userId);
+        }, 30000);
+
+        disconnectTimers.set(timerKey, graceTimer);
+      } else {
+        // No active match — remove immediately (lobby disconnect)
+        await performFullDisconnect(roomId, userId);
       }
     }
   });

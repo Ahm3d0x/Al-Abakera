@@ -194,7 +194,6 @@ Mind Race is a multi-mode knowledge competition platform supporting solo trainin
 ## Phase 4 — Tournaments, Classroom & Creator Tools
 
 **Goal:** Enable organized competitions, educational use, and user-generated content.
-**Estimated Duration:**
 
 ### 4.1 Tournament Mode
 
@@ -209,22 +208,14 @@ Mind Race is a multi-mode knowledge competition platform supporting solo trainin
 - [ ] Implement tournament-specific rooms (auto-created per match)
 - [ ] Award Creator Tokens for tournament completion
 
-### 4.2 Classroom Mode
-
-- [ ] Build teacher/instructor account role
-- [ ] Teacher can create and assign competitions to a class
-- [ ] Teacher can monitor student progress in real time
-- [ ] Teacher can review results per student
-- [ ] Support private classroom rooms
-
-### 4.3 Streamer Mode
+### 4.2 Streamer Mode
 
 - [ ] Build audience participation system (viewers answer alongside the stream)
 - [ ] Generate a unique join link for live stream audiences
 - [ ] Display audience leaderboard separately from main players
 - [ ] Support large spectator counts (optimize WebSocket fan-out)
 
-### 4.4 Question Packs
+### 4.3 Question Packs
 
 - [ ] Build question pack creation UI
 - [ ] Support packs: Science, Math, Electronics, Programming (and custom)
@@ -232,11 +223,11 @@ Mind Race is a multi-mode knowledge competition platform supporting solo trainin
 - [ ] Implement pack rating and review system
 - [ ] Gate pack publishing behind Creator Tokens
 
-### 4.5 Voting System
+### 4.4 Voting System
 
 - [ ] Implement post-match voting:
   - [ ] Best Player (individual matches)
-  - [ ] Best Team / Best Captain / Best Answer (team matches)
+  - [ ] Best Team / Best Answer (team matches)
 - [ ] Display voting results on end screen
 
 ---

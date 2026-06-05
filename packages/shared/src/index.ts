@@ -57,7 +57,8 @@ export type QuestionType =
   | 'MULTI_SELECT'
   | 'CALCULATION_QUESTION'
   | 'CIRCUIT_QUESTION'
-  | 'CODING_QUESTION';
+  | 'CODING_QUESTION'
+  | 'SHORT_ANSWER';
 
 export interface QuestionOption {
   id: string;
@@ -124,17 +125,20 @@ export interface RoomConfig {
   buzzerType: BuzzerType;
   allowedPowerUps: PowerUpType[];
   categoryWeights: { [category: string]: number }; // percentage weight sum to 100
+  judgeId?: string | null;
 }
 
 export interface Participant {
   userId: string;
   username: string;
   avatarUrl: string | null;
+  rank: string;
   score: number;
   isHost: boolean;
   isReady: boolean;
   teamId: string | null; // For TEAM_BATTLE
   isSpectator: boolean;
+  isOnline?: boolean; // For reconnection grace period tracking
 }
 
 export interface Room {

@@ -31,6 +31,7 @@ export type GameSyncCallbacks = {
   }) => void;
   onPowerUpUsed?: (data: { userId: string; powerUpType: string; targetUserId?: string }) => void;
   onChatMessage?: (data: { userId: string; username: string; message: string; teamId?: string | null }) => void;
+  onAnswerSubmitted?: (data: { id: string; round_id: string; user_id: string; answer: unknown; is_correct: boolean; points_earned: number; time_spent_ms: number }) => void;
 };
 
 export class GameSyncService {
@@ -41,6 +42,7 @@ export class GameSyncService {
   private channel: RealtimeChannel | null = null;
   private callbacks: GameSyncCallbacks = {};
   public activeParticipants: Participant[] = [];
+  private activeRoundId: string | null = null;
   
   // Local timer state for round ticking
   private roundTimer: NodeJS.Timeout | null = null;
@@ -245,6 +247,22 @@ export class GameSyncService {
             await this.handleMatchEnd(match.id);
           }
         }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "round_answers",
+        },
+        async (payload: any) => {
+          const ans = payload.new;
+          if (ans && ans.round_id === this.activeRoundId) {
+            if (this.callbacks.onAnswerSubmitted) {
+              this.callbacks.onAnswerSubmitted(ans);
+            }
+          }
+        }
       );
 
     // 5. Subscribe and Track presence
@@ -412,6 +430,7 @@ export class GameSyncService {
    * Handle when a new round SQL row is inserted
    */
   private async handleRoundStart(round: any) {
+    this.activeRoundId = round.id;
     if (this.roundTimer) clearInterval(this.roundTimer);
 
     // Fetch full question text (safe select since trigger hides answers on clients)
@@ -870,6 +889,67 @@ export class GameSyncService {
           teamId,
         },
       });
+    }
+  }
+
+  /**
+   * Action: Manually grade a player's answer (Judge only)
+   */
+  public async judgeAnswer(answerId: string, isCorrect: boolean, points: number): Promise<boolean> {
+    try {
+      const { data, error } = await supabase.rpc("judge_answer", {
+        p_answer_id: answerId,
+        p_is_correct: isCorrect,
+        p_points_earned: points
+      });
+      if (error) {
+        console.error("[GameSync] judgeAnswer error:", error);
+        return false;
+      }
+      return !!data;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
+  }
+
+  /**
+   * Action: Manually adjust a player's score (Judge only)
+   */
+  public async adjustScore(userId: string, pointsDelta: number): Promise<boolean> {
+    try {
+      const { data, error } = await supabase.rpc("adjust_participant_score", {
+        p_room_id: this.roomId,
+        p_user_id: userId,
+        p_points_delta: pointsDelta
+      });
+      if (error) {
+        console.error("[GameSync] adjustScore error:", error);
+        return false;
+      }
+      return !!data;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
+  }
+
+  /**
+   * Action: Manually end the current round (Judge only)
+   */
+  public async endRoundManually(roundId: string): Promise<boolean> {
+    try {
+      const { data, error } = await supabase.rpc("end_round_manually", {
+        p_round_id: roundId
+      });
+      if (error) {
+        console.error("[GameSync] endRoundManually error:", error);
+        return false;
+      }
+      return !!data;
+    } catch (e) {
+      console.error(e);
+      return false;
     }
   }
 }
