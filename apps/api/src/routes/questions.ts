@@ -9,15 +9,21 @@ const STATIC_FALLBACK_QUESTIONS: any[] = [
     id: 'q1',
     type: 'MULTIPLE_CHOICE',
     category: 'Science / العلوم',
-    body: 'Which element has the highest thermal conductivity of any natural material?\nأي العناصر التالية يمتلك أعلى موصلية حرارية بين المواد الطبيعية؟',
+    body: {
+      en: 'Which element has the highest thermal conductivity of any natural material?',
+      ar: 'أي العناصر التالية يمتلك أعلى موصلية حرارية بين المواد الطبيعية؟'
+    },
     options: [
-      { id: 'a', text: 'Silver / الفضة' },
-      { id: 'b', text: 'Copper / النحاس' },
-      { id: 'c', text: 'Diamond / الماس' },
-      { id: 'd', text: 'Gold / الذهب' }
+      { id: 'a', text: { en: 'Silver', ar: 'الفضة' } },
+      { id: 'b', text: { en: 'Copper', ar: 'النحاس' } },
+      { id: 'c', text: { en: 'Diamond', ar: 'الماس' } },
+      { id: 'd', text: { en: 'Gold', ar: 'الذهب' } }
     ],
     difficulty: 'Medium',
-    explanation: 'Diamond has a thermal conductivity five times higher than copper.\nالماس يمتلك موصلية حرارية تفوق النحاس بخمسة أضعاف.',
+    explanation: {
+      en: 'Diamond has a thermal conductivity five times higher than copper.',
+      ar: 'الماس يمتلك موصلية حرارية تفوق النحاس بخمسة أضعاف.'
+    },
     correct_answer: 'c',
     rating: 4.8
   },
@@ -25,9 +31,15 @@ const STATIC_FALLBACK_QUESTIONS: any[] = [
     id: 'q2',
     type: 'TRUE_FALSE',
     category: 'Physics / الفيزياء',
-    body: 'Sound waves travel faster in water than in air.\nتنتقل الموجات الصوتية في الماء بسرعة أكبر من انتقالها في الهواء.',
+    body: {
+      en: 'Sound waves travel faster in water than in air.',
+      ar: 'تنتقل الموجات الصوتية في الماء بسرعة أكبر من انتقالها في الهواء.'
+    },
     difficulty: 'Easy',
-    explanation: 'Because water is denser than air, sound travels about 4.3 times faster in it.\nلأن الماء أكثر كثافة من الهواء، ينتقل الصوت فيه بسرعة أكبر بنحو 4.3 أضعاف.',
+    explanation: {
+      en: 'Because water is denser than air, sound travels about 4.3 times faster in it.',
+      ar: 'لأن الماء أكثر كثافة من الهواء، ينتقل الصوت فيه بسرعة أكبر بنحو 4.3 أضعاف.'
+    },
     correct_answer: 'true',
     rating: 4.5
   },
@@ -35,9 +47,15 @@ const STATIC_FALLBACK_QUESTIONS: any[] = [
     id: 'q3',
     type: 'FILL_IN_THE_BLANK',
     category: 'Math / الرياضيات',
-    body: 'What is the value of Pi rounded to two decimal places?\nما هي قيمة ثابت بّاي (Pi) مقربة لعددين عشريين؟',
+    body: {
+      en: 'What is the value of Pi rounded to two decimal places?',
+      ar: 'ما هي قيمة ثابت بّاي (Pi) مقربة لعددين عشريين؟'
+    },
     difficulty: 'Easy',
-    explanation: 'Pi is approximately 3.14159..., which rounds to 3.14.\nثابت باي هو تقريباً 3.14159... والذي يقرب إلى 3.14.',
+    explanation: {
+      en: 'Pi is approximately 3.14159..., which rounds to 3.14.',
+      ar: 'ثابت باي هو تقريباً 3.14159... والذي يقرب إلى 3.14.'
+    },
     correct_answer: '3.14',
     rating: 4.2
   },
@@ -45,55 +63,79 @@ const STATIC_FALLBACK_QUESTIONS: any[] = [
     id: 'q4',
     type: 'ORDERING_QUESTION',
     category: 'Astronomy / الفلك',
-    body: 'Order these planets from closest to farthest from the Sun.\nرتب الكواكب التالية من الأقرب إلى الأبعد عن الشمس.',
+    body: {
+      en: 'Order these planets from closest to farthest from the Sun.',
+      ar: 'رتب الكواكب التالية من الأقرب إلى الأبعد عن الشمس.'
+    },
     options: [
-      { id: '1', text: 'Venus / الزهرة' },
-      { id: '2', text: 'Mercury / عطارد' },
-      { id: '3', text: 'Mars / المريخ' },
-      { id: '4', text: 'Earth / الأرض' }
+      { id: '1', text: { en: 'Venus', ar: 'الزهرة' } },
+      { id: '2', text: { en: 'Mercury', ar: 'عطارد' } },
+      { id: '3', text: { en: 'Mars', ar: 'المريخ' } },
+      { id: '4', text: { en: 'Earth', ar: 'الأرض' } }
     ],
     difficulty: 'Medium',
     ordering_items: ['2', '1', '4', '3'],
-    explanation: 'Mercury is closest, followed by Venus, Earth, and Mars.\nعطارد هو الأقرب، يليه الزهرة، ثم الأرض، وأخيراً المريخ.',
+    explanation: {
+      en: 'Mercury is closest, followed by Venus, Earth, and Mars.',
+      ar: 'عطارد هو الأقرب، يليه الزهرة، ثم الأرض، وأخيراً المريخ.'
+    },
     rating: 4.6
   },
   {
     id: 'q5',
     type: 'MATCHING_QUESTION',
     category: 'Technology / التقنية',
-    body: 'Match the programming terms with their definitions.\nصل المصطلحات البرمجية بالتعريفات المناسبة لها.',
+    body: {
+      en: 'Match the programming terms with their definitions.',
+      ar: 'صل المصطلحات البرمجية بالتعريفات المناسبة لها.'
+    },
     matching_pairs: [
-      { leftId: 'v', leftText: 'Variable / المتغير', rightId: '1', rightText: 'Stores data / يخزن البيانات' },
-      { leftId: 'f', leftText: 'Function / الدالة', rightId: '2', rightText: 'Reusable block / كتلة برمجية يعاد استخدامها' },
-      { leftId: 'l', leftText: 'Loop / التكرار', rightId: '3', rightText: 'Repeats instructions / يكرر التعليمات البرمجية' }
+      { leftId: 'v', leftText: { en: 'Variable', ar: 'المتغير' }, rightId: '1', rightText: { en: 'Stores data', ar: 'يخزن البيانات' } },
+      { leftId: 'f', leftText: { en: 'Function', ar: 'الدالة' }, rightId: '2', rightText: { en: 'Reusable block', ar: 'كتلة برمجية يعاد استخدامها' } },
+      { leftId: 'l', leftText: { en: 'Loop', ar: 'التكرار' }, rightId: '3', rightText: { en: 'Repeats instructions', ar: 'يكرر التعليمات البرمجية' } }
     ],
     difficulty: 'Medium',
-    explanation: 'Variables store data, functions are reusable blocks, and loops repeat instructions.\nالمتغيرات تخزن البيانات، الدوال كتل يعاد استخدامها، والتكرار يكرر الأوامر.',
+    explanation: {
+      en: 'Variables store data, functions are reusable blocks, and loops repeat instructions.',
+      ar: 'المتغيرات تخزن البيانات، الدوال كتل يعاد استخدامها، والتكرار يكرر الأوامر.'
+    },
     rating: 4.7
   },
   {
     id: 'q6',
     type: 'MULTI_SELECT',
     category: 'Math / الرياضيات',
-    body: 'Select all of the following numbers that are prime.\nاختر جميع الأعداد الأولية من القائمة التالية.',
+    body: {
+      en: 'Select all of the following numbers that are prime.',
+      ar: 'اختر جميع الأعداد الأولية من القائمة التالية.'
+    },
     options: [
-      { id: 'a', text: '2' },
-      { id: 'b', text: '3' },
-      { id: 'c', text: '9' },
-      { id: 'd', text: '11' }
+      { id: 'a', text: { en: '2', ar: '2' } },
+      { id: 'b', text: { en: '3', ar: '3' } },
+      { id: 'c', text: { en: '9', ar: '9' } },
+      { id: 'd', text: { en: '11', ar: '11' } }
     ],
     difficulty: 'Medium',
     correct_answer: ['a', 'b', 'd'],
-    explanation: '2, 3, and 11 have no divisors other than 1 and themselves. 9 is divisible by 3.\nالأعداد 2 و 3 و 11 لا تقبل القسمة إلا على نفسها وعلى 1. العدد 9 يقبل القسمة على 3.',
+    explanation: {
+      en: '2, 3, and 11 have no divisors other than 1 and themselves. 9 is divisible by 3.',
+      ar: 'الأعداد 2 و 3 و 11 لا تقبل القسمة إلا على نفسها وعلى 1. العدد 9 يقبل القسمة على 3.'
+    },
     rating: 4.4
   },
   {
     id: 'q7',
     type: 'CALCULATION_QUESTION',
     category: 'Electronics / إلكترونيات',
-    body: 'Calculate the current (in Amperes) flowing in a circuit with a 12V voltage source and a 4 Ohm resistor.\nاحسب شدة التيار (بالأمبير) المار في دائرة كهربائية بها مصدر جهد 12 فولت ومقاومة 4 أوم.',
+    body: {
+      en: 'Calculate the current (in Amperes) flowing in a circuit with a 12V voltage source and a 4 Ohm resistor.',
+      ar: 'احسب شدة التيار (بالأمبير) المار في دائرة كهربائية بها مصدر جهد 12 فولت ومقاومة 4 أوم.'
+    },
     difficulty: 'Easy',
-    explanation: 'Using Ohm\'s law (I = V / R), Current = 12V / 4 Ohms = 3 Amperes.\nباستخدام قانون أوم (ت = جـ / م)، التيار = 12 / 4 = 3 أمبير.',
+    explanation: {
+      en: "Using Ohm's law (I = V / R), Current = 12V / 4 Ohms = 3 Amperes.",
+      ar: 'باستخدام قانون أوم (ت = جـ / م)، التيار = 12 / 4 = 3 أمبير.'
+    },
     correct_answer: '3',
     rating: 4.3
   },
@@ -101,43 +143,61 @@ const STATIC_FALLBACK_QUESTIONS: any[] = [
     id: 'q8',
     type: 'CIRCUIT_QUESTION',
     category: 'Electronics / إلكترونيات',
-    body: 'What is the equivalent resistance of two 10 Ohm resistors connected in parallel?\nما هي المقاومة المكافئة لمقاومتين قيمة كل منهما 10 أوم متصلتين على التوازي؟',
+    body: {
+      en: 'What is the equivalent resistance of two 10 Ohm resistors connected in parallel?',
+      ar: 'ما هي المقاومة المكافئة لمقاومتين قيمة كل منهما 10 أوم متصلتين على التوازي؟'
+    },
     options: [
-      { id: 'a', text: '20 Ohms / أوم' },
-      { id: 'b', text: '5 Ohms / أوم' },
-      { id: 'c', text: '10 Ohms / أوم' }
+      { id: 'a', text: { en: '20 Ohms', ar: '20 أوم' } },
+      { id: 'b', text: { en: '5 Ohms', ar: '5 أوم' } },
+      { id: 'c', text: { en: '10 Ohms', ar: '10 أوم' } }
     ],
     difficulty: 'Medium',
     correct_answer: 'b',
-    explanation: 'For parallel resistors: R_eq = (R1 * R2) / (R1 + R2) = 100 / 20 = 5 Ohms.\nللمقاومات على التوازي: م المكافئة = (م1 * م2) / (م1 + م2) = 100 / 20 = 5 أوم.',
+    explanation: {
+      en: 'For parallel resistors: R_eq = (R1 * R2) / (R1 + R2) = 100 / 20 = 5 Ohms.',
+      ar: 'للمقاومات على التوازي: م المكافئة = (م1 * م2) / (م1 + م2) = 100 / 20 = 5 أوم.'
+    },
     rating: 4.5
   },
   {
     id: 'q9',
     type: 'IMAGE_QUESTION',
     category: 'Chemistry / الكيمياء',
-    body: 'Identify the chemical compound represented by this hexagonal ring structure.\nتعرف على المركب الكيميائي الممثل بحلقة السداسي العطري الموضحة.',
+    body: {
+      en: 'Identify the chemical compound represented by this hexagonal ring structure.',
+      ar: 'تعرف على المركب الكيميائي الممثل بحلقة السداسي العطري الموضحة.'
+    },
     imageUrl: 'https://images.unsplash.com/photo-1603126857599-f6e157fa2fe6?auto=format&fit=crop&w=500&q=80',
     options: [
-      { id: 'a', text: 'Cyclohexane / سيكلوهكسان' },
-      { id: 'b', text: 'Benzene / بنزين' },
-      { id: 'c', text: 'Toluene / تولوين' }
+      { id: 'a', text: { en: 'Cyclohexane', ar: 'سيكلوهكسان' } },
+      { id: 'b', text: { en: 'Benzene', ar: 'بنزين' } },
+      { id: 'c', text: { en: 'Toluene', ar: 'تولوين' } }
     ],
     difficulty: 'Medium',
     correct_answer: 'b',
-    explanation: 'Benzene (C6H6) is represented by a hexagonal ring with a circle or alternating double bonds.\nالبنزين العطري (C6H6) يمثل بحلقة سداسية تحتوي على روابط ثنائية متبادلة.',
+    explanation: {
+      en: 'Benzene (C6H6) is represented by a hexagonal ring with a circle or alternating double bonds.',
+      ar: 'البنزين العطري (C6H6) يمثل بحلقة سداسية تحتوي على روابط ثنائية متبادلة.'
+    },
     rating: 4.8
   },
   {
     id: 'q10',
     type: 'CODING_QUESTION',
     category: 'Programming / البرمجة',
-    body: 'Write a JavaScript function sum(a, b) that returns the sum of both parameters.\nاكتب دالة برمجية بلغة جافا سكربت sum(a, b) تقوم بإعادة مجموع المتغيرين.',
+    body: {
+      en: 'Write a JavaScript function sum(a, b) that returns the sum of both parameters.',
+      ar: 'اكتب دالة برمجية بلغة جافا سكربت sum(a, b) تقوم بإعادة مجموع المتغيرين.'
+    },
     difficulty: 'Hard',
     coding_test_cases: [
       { input: 'sum(2, 3)', output: '5' }
     ],
-    explanation: 'A simple return statement: function sum(a, b) { return a + b; }\nدالة بسيطة تعيد الناتج مباشرة: function sum(a, b) { return a + b; }',
+    explanation: {
+      en: 'A simple return statement: function sum(a, b) { return a + b; }',
+      ar: 'دالة بسيطة تعيد الناتج مباشرة: function sum(a, b) { return a + b; }'
+    },
     correct_answer: 'function sum(a, b) {\n  return a + b;\n}',
     rating: 4.9
   }

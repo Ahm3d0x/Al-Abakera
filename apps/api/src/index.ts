@@ -141,15 +141,21 @@ const BACKEND_SAMPLE_QUESTIONS: Question[] = [
     id: 'q1',
     type: 'MULTIPLE_CHOICE',
     category: 'Science / العلوم',
-    body: 'Which element has the highest thermal conductivity of any natural material?\nأي العناصر التالية يمتلك أعلى موصلية حرارية بين المواد الطبيعية؟',
+    body: {
+      en: 'Which element has the highest thermal conductivity of any natural material?',
+      ar: 'أي العناصر التالية يمتلك أعلى موصلية حرارية بين المواد الطبيعية؟'
+    },
     options: [
-      { id: 'a', text: 'Silver / الفضة' },
-      { id: 'b', text: 'Copper / النحاس' },
-      { id: 'c', text: 'Diamond / الماس' },
-      { id: 'd', text: 'Gold / الذهب' }
+      { id: 'a', text: { en: 'Silver', ar: 'الفضة' } },
+      { id: 'b', text: { en: 'Copper', ar: 'النحاس' } },
+      { id: 'c', text: { en: 'Diamond', ar: 'الماس' } },
+      { id: 'd', text: { en: 'Gold', ar: 'الذهب' } }
     ],
     difficulty: 'Medium',
-    explanation: 'Diamond has a thermal conductivity five times higher than copper.\nالماس يمتلك موصلية حرارية تفوق النحاس بخمسة أضعاف.',
+    explanation: {
+      en: 'Diamond has a thermal conductivity five times higher than copper.',
+      ar: 'الماس يمتلك موصلية حرارية تفوق النحاس بخمسة أضعاف.'
+    },
     correctAnswer: 'c',
     rating: 4.8,
     createdAt: new Date()
@@ -158,9 +164,15 @@ const BACKEND_SAMPLE_QUESTIONS: Question[] = [
     id: 'q2',
     type: 'TRUE_FALSE',
     category: 'Physics / الفيزياء',
-    body: 'Sound waves travel faster in water than in air.\nتنتقل الموجات الصوتية في الماء بسرعة أكبر من انتقالها في الهواء.',
+    body: {
+      en: 'Sound waves travel faster in water than in air.',
+      ar: 'تنتقل الموجات الصوتية في الماء بسرعة أكبر من انتقالها في الهواء.'
+    },
     difficulty: 'Easy',
-    explanation: 'Because water is denser than air, sound travels about 4.3 times faster in it.\nلأن الماء أكثر كثافة من الهواء، ينتقل الصوت فيه بسرعة أكبر بنحو 4.3 أضعاف.',
+    explanation: {
+      en: 'Because water is denser than air, sound travels about 4.3 times faster in it.',
+      ar: 'لأن الماء أكثر كثافة من الهواء، ينتقل الصوت فيه بسرعة أكبر بنحو 4.3 أضعاف.'
+    },
     correctAnswer: 'true',
     rating: 4.5,
     createdAt: new Date()
@@ -169,9 +181,15 @@ const BACKEND_SAMPLE_QUESTIONS: Question[] = [
     id: 'q3',
     type: 'FILL_IN_THE_BLANK',
     category: 'Math / الرياضيات',
-    body: 'What is the value of Pi rounded to two decimal places?\nما هي قيمة ثابت بّاي (Pi) مقربة لعددين عشريين؟',
+    body: {
+      en: 'What is the value of Pi rounded to two decimal places?',
+      ar: 'ما هي قيمة ثابت بّاي (Pi) مقربة لعددين عشريين؟'
+    },
     difficulty: 'Easy',
-    explanation: 'Pi is approximately 3.14159..., which rounds to 3.14.\nثابت باي هو تقريباً 3.14159... والذي يقرب إلى 3.14.',
+    explanation: {
+      en: 'Pi is approximately 3.14159..., which rounds to 3.14.',
+      ar: 'ثابت باي هو تقريباً 3.14159... والذي يقرب إلى 3.14.'
+    },
     correctAnswer: '3.14',
     rating: 4.2,
     createdAt: new Date()
@@ -180,16 +198,22 @@ const BACKEND_SAMPLE_QUESTIONS: Question[] = [
     id: 'q4',
     type: 'ORDERING_QUESTION',
     category: 'Astronomy / الفلك',
-    body: 'Order these planets from closest to farthest from the Sun.\nرتب الكواكب التالية من الأقرب إلى الأبعد عن الشمس.',
+    body: {
+      en: 'Order these planets from closest to farthest from the Sun.',
+      ar: 'رتب الكواكب التالية من الأقرب إلى الأبعد عن الشمس.'
+    },
     options: [
-      { id: '1', text: 'Venus / الزهرة' },
-      { id: '2', text: 'Mercury / عطارد' },
-      { id: '3', text: 'Mars / المريخ' },
-      { id: '4', text: 'Earth / الأرض' }
+      { id: '1', text: { en: 'Venus', ar: 'الزهرة' } },
+      { id: '2', text: { en: 'Mercury', ar: 'عطارد' } },
+      { id: '3', text: { en: 'Mars', ar: 'المريخ' } },
+      { id: '4', text: { en: 'Earth', ar: 'الأرض' } }
     ],
     difficulty: 'Medium',
     orderingItems: ['2', '1', '4', '3'],
-    explanation: 'Mercury is closest, followed by Venus, Earth, and Mars.\nعطارد هو الأقرب، يليه الزهرة، ثم الأرض، وأخيراً المريخ.',
+    explanation: {
+      en: 'Mercury is closest, followed by Venus, Earth, and Mars.',
+      ar: 'عطارد هو الأقرب، يليه الزهرة، ثم الأرض، وأخيراً المريخ.'
+    },
     rating: 4.6,
     createdAt: new Date()
   },
@@ -197,14 +221,20 @@ const BACKEND_SAMPLE_QUESTIONS: Question[] = [
     id: 'q5',
     type: 'MATCHING_QUESTION',
     category: 'Technology / التقنية',
-    body: 'Match the programming terms with their definitions.\nصل المصطلحات البرمجية بالتعريفات المناسبة لها.',
+    body: {
+      en: 'Match the programming terms with their definitions.',
+      ar: 'صل المصطلحات البرمجية بالتعريفات المناسبة لها.'
+    },
     matchingPairs: [
-      { leftId: 'v', leftText: 'Variable / المتغير', rightId: '1', rightText: 'Stores data / يخزن البيانات' },
-      { leftId: 'f', leftText: 'Function / الدالة', rightId: '2', rightText: 'Reusable block / كتلة برمجية يعاد استخدامها' },
-      { leftId: 'l', leftText: 'Loop / التكرار', rightId: '3', rightText: 'Repeats instructions / يكرر التعليمات البرمجية' }
+      { leftId: 'v', leftText: { en: 'Variable', ar: 'المتغير' }, rightId: '1', rightText: { en: 'Stores data', ar: 'يخزن البيانات' } },
+      { leftId: 'f', leftText: { en: 'Function', ar: 'الدالة' }, rightId: '2', rightText: { en: 'Reusable block', ar: 'كتلة برمجية يعاد استخدامها' } },
+      { leftId: 'l', leftText: { en: 'Loop', ar: 'التكرار' }, rightId: '3', rightText: { en: 'Repeats instructions', ar: 'يكرر التعليمات البرمجية' } }
     ],
     difficulty: 'Medium',
-    explanation: 'Variables store data, functions are reusable blocks, and loops repeat instructions.\nالمتغيرات تخزن البيانات، الدوال كتل يعاد استخدامها، والتكرار يكرر الأوامر.',
+    explanation: {
+      en: 'Variables store data, functions are reusable blocks, and loops repeat instructions.',
+      ar: 'المتغيرات تخزن البيانات، الدوال كتل يعاد استخدامها، والتكرار يكرر الأوامر.'
+    },
     rating: 4.7,
     createdAt: new Date()
   }

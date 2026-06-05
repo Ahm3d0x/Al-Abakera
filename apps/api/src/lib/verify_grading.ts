@@ -1,7 +1,7 @@
 import { gradeAnswer } from './grading';
 import { Question } from '@mind-race/shared';
 
-const testQuestions: { question: Question; correctSubmission: any; incorrectSubmission: any }[] = [
+const testQuestions: { question: any; correctSubmission: any; incorrectSubmission: any }[] = [
   {
     question: {
       id: 'q1',

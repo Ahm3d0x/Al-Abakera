@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { BuzzerType, GameModeType, Question, TournamentFormat, GameEvents, QuestionPack } from '@mind-race/shared';
+import { BuzzerType, GameModeType, Question, TournamentFormat, GameEvents, QuestionPack, LocalizedText } from '@mind-race/shared';
 import { GameSyncService } from '../lib/gameSync';
 import { useAuth } from '../context/AuthContext';
 import { useRouter } from 'next/navigation';
@@ -89,15 +89,21 @@ const SAMPLE_QUESTIONS: Question[] = [
     id: 'q1',
     type: 'MULTIPLE_CHOICE',
     category: 'Science / العلوم',
-    body: 'Which element has the highest thermal conductivity of any natural material?\nأي العناصر التالية يمتلك أعلى موصلية حرارية بين المواد الطبيعية؟',
+    body: {
+      en: 'Which element has the highest thermal conductivity of any natural material?',
+      ar: 'أي العناصر التالية يمتلك أعلى موصلية حرارية بين المواد الطبيعية؟'
+    },
     options: [
-      { id: 'a', text: 'Silver / الفضة' },
-      { id: 'b', text: 'Copper / النحاس' },
-      { id: 'c', text: 'Diamond / الماس' },
-      { id: 'd', text: 'Gold / الذهب' }
+      { id: 'a', text: { en: 'Silver', ar: 'الفضة' } },
+      { id: 'b', text: { en: 'Copper', ar: 'النحاس' } },
+      { id: 'c', text: { en: 'Diamond', ar: 'الماس' } },
+      { id: 'd', text: { en: 'Gold', ar: 'الذهب' } }
     ],
     difficulty: 'Medium',
-    explanation: 'Diamond has a thermal conductivity five times higher than copper.\nالماس يمتلك موصلية حرارية تفوق النحاس بخمسة أضعاف.',
+    explanation: {
+      en: 'Diamond has a thermal conductivity five times higher than copper.',
+      ar: 'الماس يمتلك موصلية حرارية تفوق النحاس بخمسة أضعاف.'
+    },
     correctAnswer: 'c',
     rating: 4.8,
     createdAt: new Date()
@@ -106,9 +112,15 @@ const SAMPLE_QUESTIONS: Question[] = [
     id: 'q2',
     type: 'TRUE_FALSE',
     category: 'Physics / الفيزياء',
-    body: 'Sound waves travel faster in water than in air.\nتنتقل الموجات الصوتية في الماء بسرعة أكبر من انتقالها في الهواء.',
+    body: {
+      en: 'Sound waves travel faster in water than in air.',
+      ar: 'تنتقل الموجات الصوتية في الماء بسرعة أكبر من انتقالها في الهواء.'
+    },
     difficulty: 'Easy',
-    explanation: 'Because water is denser than air, sound travels about 4.3 times faster in it.\nلأن الماء أكثر كثافة من الهواء، ينتقل الصوت فيه بسرعة أكبر بنحو 4.3 أضعاف.',
+    explanation: {
+      en: 'Because water is denser than air, sound travels about 4.3 times faster in it.',
+      ar: 'لأن الماء أكثر كثافة من الهواء، ينتقل الصوت فيه بسرعة أكبر بنحو 4.3 أضعاف.'
+    },
     correctAnswer: 'true',
     rating: 4.5,
     createdAt: new Date()
@@ -117,9 +129,15 @@ const SAMPLE_QUESTIONS: Question[] = [
     id: 'q3',
     type: 'FILL_IN_THE_BLANK',
     category: 'Math / الرياضيات',
-    body: 'What is the value of Pi rounded to two decimal places?\nما هي قيمة ثابت بّاي (Pi) مقربة لعددين عشريين؟',
+    body: {
+      en: 'What is the value of Pi rounded to two decimal places?',
+      ar: 'ما هي قيمة ثابت بّاي (Pi) مقربة لعددين عشريين؟'
+    },
     difficulty: 'Easy',
-    explanation: 'Pi is approximately 3.14159..., which rounds to 3.14.\nثابت باي هو تقريباً 3.14159... والذي يقرب إلى 3.14.',
+    explanation: {
+      en: 'Pi is approximately 3.14159..., which rounds to 3.14.',
+      ar: 'ثابت باي هو تقريباً 3.14159... والذي يقرب إلى 3.14.'
+    },
     correctAnswer: '3.14',
     rating: 4.2,
     createdAt: new Date()
@@ -128,16 +146,22 @@ const SAMPLE_QUESTIONS: Question[] = [
     id: 'q4',
     type: 'ORDERING_QUESTION',
     category: 'Astronomy / الفلك',
-    body: 'Order these planets from closest to farthest from the Sun.\nرتب الكواكب التالية من الأقرب إلى الأبعد عن الشمس.',
+    body: {
+      en: 'Order these planets from closest to farthest from the Sun.',
+      ar: 'رتب الكواكب التالية من الأقرب إلى الأبعد عن الشمس.'
+    },
     options: [
-      { id: '1', text: 'Venus / الزهرة' },
-      { id: '2', text: 'Mercury / عطارد' },
-      { id: '3', text: 'Mars / المريخ' },
-      { id: '4', text: 'Earth / الأرض' }
+      { id: '1', text: { en: 'Venus', ar: 'الزهرة' } },
+      { id: '2', text: { en: 'Mercury', ar: 'عطارد' } },
+      { id: '3', text: { en: 'Mars', ar: 'المريخ' } },
+      { id: '4', text: { en: 'Earth', ar: 'الأرض' } }
     ],
     difficulty: 'Medium',
     orderingItems: ['2', '1', '4', '3'],
-    explanation: 'Mercury is closest, followed by Venus, Earth, and Mars.\nعطارد هو الأقرب، يليه الزهرة، ثم الأرض، وأخيراً المريخ.',
+    explanation: {
+      en: 'Mercury is closest, followed by Venus, Earth, and Mars.',
+      ar: 'عطارد هو الأقرب، يليه الزهرة، ثم الأرض، وأخيراً المريخ.'
+    },
     rating: 4.6,
     createdAt: new Date()
   },
@@ -145,14 +169,20 @@ const SAMPLE_QUESTIONS: Question[] = [
     id: 'q5',
     type: 'MATCHING_QUESTION',
     category: 'Technology / التقنية',
-    body: 'Match the programming terms with their definitions.\nصل المصطلحات البرمجية بالتعريفات المناسبة لها.',
+    body: {
+      en: 'Match the programming terms with their definitions.',
+      ar: 'صل المصطلحات البرمجية بالتعريفات المناسبة لها.'
+    },
     matchingPairs: [
-      { leftId: 'v', leftText: 'Variable / المتغير', rightId: '1', rightText: 'Stores data / يخزن البيانات' },
-      { leftId: 'f', leftText: 'Function / الدالة', rightId: '2', rightText: 'Reusable block / كتلة برمجية يعاد استخدامها' },
-      { leftId: 'l', leftText: 'Loop / التكرار', rightId: '3', rightText: 'Repeats instructions / يكرر التعليمات البرمجية' }
+      { leftId: 'v', leftText: { en: 'Variable', ar: 'المتغير' }, rightId: '1', rightText: { en: 'Stores data', ar: 'يخزن البيانات' } },
+      { leftId: 'f', leftText: { en: 'Function', ar: 'الدالة' }, rightId: '2', rightText: { en: 'Reusable block', ar: 'كتلة برمجية يعاد استخدامها' } },
+      { leftId: 'l', leftText: { en: 'Loop', ar: 'التكرار' }, rightId: '3', rightText: { en: 'Repeats instructions', ar: 'يكرر التعليمات البرمجية' } }
     ],
     difficulty: 'Medium',
-    explanation: 'Variables store data, functions are reusable blocks, and loops repeat instructions.\nالمتغيرات تخزن البيانات، الدوال كتل يعاد استخدامها، والتكرار يكرر الأوامر.',
+    explanation: {
+      en: 'Variables store data, functions are reusable blocks, and loops repeat instructions.',
+      ar: 'المتغيرات تخزن البيانات، الدوال كتل يعاد استخدامها، والتكرار يكرر الأوامر.'
+    },
     rating: 4.7,
     createdAt: new Date()
   },
@@ -160,16 +190,22 @@ const SAMPLE_QUESTIONS: Question[] = [
     id: 'q6',
     type: 'MULTI_SELECT',
     category: 'Math / الرياضيات',
-    body: 'Select all of the following numbers that are prime.\nاختر جميع الأعداد الأولية من القائمة التالية.',
+    body: {
+      en: 'Select all of the following numbers that are prime.',
+      ar: 'اختر جميع الأعداد الأولية من القائمة التالية.'
+    },
     options: [
-      { id: 'a', text: '2' },
-      { id: 'b', text: '3' },
-      { id: 'c', text: '9' },
-      { id: 'd', text: '11' }
+      { id: 'a', text: { en: '2', ar: '2' } },
+      { id: 'b', text: { en: '3', ar: '3' } },
+      { id: 'c', text: { en: '9', ar: '9' } },
+      { id: 'd', text: { en: '11', ar: '11' } }
     ],
     difficulty: 'Medium',
     correctAnswer: ['a', 'b', 'd'],
-    explanation: '2, 3, and 11 have no divisors other than 1 and themselves. 9 is divisible by 3.\nالأعداد 2 و 3 و 11 لا تقبل القسمة إلا على نفسها وعلى 1. العدد 9 يقبل القسمة على 3.',
+    explanation: {
+      en: '2, 3, and 11 have no divisors other than 1 and themselves. 9 is divisible by 3.',
+      ar: 'الأعداد 2 و 3 و 11 لا تقبل القسمة إلا على نفسها وعلى 1. العدد 9 يقبل القسمة على 3.'
+    },
     rating: 4.4,
     createdAt: new Date()
   },
@@ -177,9 +213,15 @@ const SAMPLE_QUESTIONS: Question[] = [
     id: 'q7',
     type: 'CALCULATION_QUESTION',
     category: 'Electronics / إلكترونيات',
-    body: 'Calculate the current (in Amperes) flowing in a circuit with a 12V voltage source and a 4 Ohm resistor.\nاحسب شدة التيار (بالأمبير) المار في دائرة كهربائية بها مصدر جهد 12 فولت ومقاومة 4 أوم.',
+    body: {
+      en: 'Calculate the current (in Amperes) flowing in a circuit with a 12V voltage source and a 4 Ohm resistor.',
+      ar: 'احسب شدة التيار (بالأمبير) المار في دائرة كهربائية بها مصدر جهد 12 فولت ومقاومة 4 أوم.'
+    },
     difficulty: 'Easy',
-    explanation: 'Using Ohm\'s law (I = V / R), Current = 12V / 4 Ohms = 3 Amperes.\nباستخدام قانون أوم (ت = جـ / م)، التيار = 12 / 4 = 3 أمبير.',
+    explanation: {
+      en: 'Using Ohm\'s law (I = V / R), Current = 12V / 4 Ohms = 3 Amperes.',
+      ar: 'باستخدام قانون أوم (ت = جـ / م)، التيار = 12 / 4 = 3 أمبير.'
+    },
     correctAnswer: '3',
     rating: 4.3,
     createdAt: new Date()
@@ -188,15 +230,21 @@ const SAMPLE_QUESTIONS: Question[] = [
     id: 'q8',
     type: 'CIRCUIT_QUESTION',
     category: 'Electronics / إلكترونيات',
-    body: 'What is the equivalent resistance of two 10 Ohm resistors connected in parallel?\nما هي المقاومة المكافئة لمقاومتين قيمة كل منهما 10 أوم متصلتين على التوازي؟',
+    body: {
+      en: 'What is the equivalent resistance of two 10 Ohm resistors connected in parallel?',
+      ar: 'ما هي المقاومة المكافئة لمقاومتين قيمة كل منهما 10 أوم متصلتين على التوازي؟'
+    },
     options: [
-      { id: 'a', text: '20 Ohms / أوم' },
-      { id: 'b', text: '5 Ohms / أوم' },
-      { id: 'c', text: '10 Ohms / أوم' }
+      { id: 'a', text: { en: '20 Ohms', ar: 'أوم 20' } },
+      { id: 'b', text: { en: '5 Ohms', ar: 'أوم 5' } },
+      { id: 'c', text: { en: '10 Ohms', ar: 'أوم 10' } }
     ],
     difficulty: 'Medium',
     correctAnswer: 'b',
-    explanation: 'For parallel resistors: R_eq = (R1 * R2) / (R1 + R2) = 100 / 20 = 5 Ohms.\nللمقاومات على التوازي: م المكافئة = (م1 * م2) / (م1 + م2) = 100 / 20 = 5 أوم.',
+    explanation: {
+      en: 'For parallel resistors: R_eq = (R1 * R2) / (R1 + R2) = 100 / 20 = 5 Ohms.',
+      ar: 'للمقاومات على التوازي: م المكافئة = (م1 * م2) / (م1 + م2) = 100 / 20 = 5 أوم.'
+    },
     rating: 4.5,
     createdAt: new Date()
   },
@@ -204,16 +252,22 @@ const SAMPLE_QUESTIONS: Question[] = [
     id: 'q9',
     type: 'IMAGE_QUESTION',
     category: 'Chemistry / الكيمياء',
-    body: 'Identify the chemical compound represented by this hexagonal ring structure.\nتعرف على المركب الكيميائي الممثل بحلقة السداسي العطري الموضحة.',
+    body: {
+      en: 'Identify the chemical compound represented by this hexagonal ring structure.',
+      ar: 'تعرف على المركب الكيميائي الممثل بحلقة السداسي العطري الموضحة.'
+    },
     imageUrl: 'https://images.unsplash.com/photo-1603126857599-f6e157fa2fe6?auto=format&fit=crop&w=500&q=80',
     options: [
-      { id: 'a', text: 'Cyclohexane / سيكلوهكسان' },
-      { id: 'b', text: 'Benzene / بنزين' },
-      { id: 'c', text: 'Toluene / تولوين' }
+      { id: 'a', text: { en: 'Cyclohexane', ar: 'سيكلوهكسان' } },
+      { id: 'b', text: { en: 'Benzene', ar: 'بنزين' } },
+      { id: 'c', text: { en: 'Toluene', ar: 'تولوين' } }
     ],
     difficulty: 'Medium',
     correctAnswer: 'b',
-    explanation: 'Benzene (C6H6) is represented by a hexagonal ring with a circle or alternating double bonds.\nالبنزين العطري (C6H6) يمثل بحلقة سداسية تحتوي على روابط ثنائية متبادلة.',
+    explanation: {
+      en: 'Benzene (C6H6) is represented by a hexagonal ring with a circle or alternating double bonds.',
+      ar: 'البنزين العطري (C6H6) يمثل بحلقة سداسية تحتوي على روابط ثنائية متبادلة.'
+    },
     rating: 4.8,
     createdAt: new Date()
   },
@@ -221,12 +275,18 @@ const SAMPLE_QUESTIONS: Question[] = [
     id: 'q10',
     type: 'CODING_QUESTION',
     category: 'Programming / البرمجة',
-    body: 'Write a JavaScript function sum(a, b) that returns the sum of both parameters.\nاكتب دالة برمجية بلغة جافا سكربت sum(a, b) تقوم بإعادة مجموع المتغيرين.',
+    body: {
+      en: 'Write a JavaScript function sum(a, b) that returns the sum of both parameters.',
+      ar: 'اكتب دالة برمجية بلغة جافا سكربت sum(a, b) تقوم بإعادة مجموع المتغيرين.'
+    },
     difficulty: 'Hard',
     codingTestCases: [
       { input: 'sum(2, 3)', output: '5' }
     ],
-    explanation: 'A simple return statement: function sum(a, b) { return a + b; }\nدالة بسيطة تعيد الناتج مباشرة: function sum(a, b) { return a + b; }',
+    explanation: {
+      en: 'A simple return statement: function sum(a, b) { return a + b; }',
+      ar: 'دالة بسيطة تعيد الناتج مباشرة: function sum(a, b) { return a + b; }'
+    },
     correctAnswer: 'function sum(a, b) {\n  return a + b;\n}',
     rating: 4.9,
     createdAt: new Date()
@@ -239,6 +299,37 @@ export default function ClientPage() {
 
   // Navigation and Layout states
   const [isRtl, setIsRtl] = useState(false);
+
+  const getLocalizedText = (textObj: any): string => {
+    if (!textObj) return '';
+    if (typeof textObj === 'string') return textObj;
+    return isRtl ? (textObj.ar || textObj.en || '') : (textObj.en || textObj.ar || '');
+  };
+
+  const parseLocalizedInput = (text: string): { ar: string; en: string } => {
+    const trimmed = text ? text.trim() : '';
+    if (!trimmed) return { ar: '', en: '' };
+    
+    // If it contains a newline, it's likely a multi-line body with English and Arabic separated
+    if (trimmed.includes('\n')) {
+      const lines = trimmed.split('\n').map(l => l.trim()).filter(Boolean);
+      if (lines.length >= 2) {
+        return { en: lines[0], ar: lines[1] };
+      }
+    }
+    
+    // If it contains a slash, it's likely "English / Arabic"
+    if (trimmed.includes('/')) {
+      const parts = trimmed.split('/').map(p => p.trim());
+      if (parts.length >= 2) {
+        return { en: parts[0], ar: parts[1] };
+      }
+    }
+    
+    // Fallback: assign same text to both languages
+    return { ar: trimmed, en: trimmed };
+  };
+
   const [screen, setScreen] = useState<'dashboard' | 'lobby' | 'cinematic' | 'game' | 'summary'>('dashboard');
   const [apiStatus, setApiStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [socketStatus, setSocketStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
@@ -253,7 +344,7 @@ export default function ClientPage() {
   const [spectatorAnswerSubmitted, setSpectatorAnswerSubmitted] = useState(false);
   const [spectatorIsAnswerCorrect, setSpectatorIsAnswerCorrect] = useState<boolean | null>(null);
   const [spectatorCorrectAnswer, setSpectatorCorrectAnswer] = useState<unknown>(null);
-  const [spectatorExplanation, setSpectatorExplanation] = useState('');
+  const [spectatorExplanation, setSpectatorExplanation] = useState<string | LocalizedText>('');
   const [spectatorPointsEarned, setSpectatorPointsEarned] = useState(0);
   const socketRef = useRef<Socket | null>(null);
 
@@ -543,7 +634,7 @@ export default function ClientPage() {
       setScreen('cinematic');
     });
 
-    socket.on('game:round_start', (data: { roundIndex: number; totalRounds: number; question: { id: string; type: string; category: string; body: string; image_url?: string; options?: { id: string; text: string }[]; difficulty: string; explanation?: string }; timeLeft: number; scores: Record<string, number> }) => {
+    socket.on('game:round_start', (data: { roundIndex: number; totalRounds: number; question: { id: string; type: string; category: string; body: LocalizedText; image_url?: string; options?: { id: string; text: LocalizedText }[]; difficulty: string; explanation?: LocalizedText }; timeLeft: number; scores: Record<string, number> }) => {
       console.log('[Socket] Spectator Round Start:', data);
       setGameMode('FREE_FOR_ALL'); // Match layout style
       
@@ -908,12 +999,12 @@ export default function ClientPage() {
         ...prev,
         {
           roundNumber: currentQIndex + 1,
-          questionText: q.body,
+          questionText: getLocalizedText(q.body),
           questionType: q.type,
           isCorrect: false,
           userAnswer: null,
           correctAnswer: q.correctAnswer || q.orderingItems || q.matchingPairs,
-          explanation: q.explanation || '',
+          explanation: getLocalizedText(q.explanation),
           timeSpent: 30
         }
       ]);
@@ -1105,12 +1196,12 @@ export default function ClientPage() {
         ...prev,
         {
           roundNumber: currentQIndex + 1,
-          questionText: q.body,
+          questionText: getLocalizedText(q.body),
           questionType: q.type,
           isCorrect,
           userAnswer: userAns,
           correctAnswer: q.correctAnswer || q.orderingItems || q.matchingPairs,
-          explanation: q.explanation || '',
+          explanation: getLocalizedText(q.explanation),
           timeSpent: 30 - timeLeft
         }
       ]);
@@ -1126,12 +1217,12 @@ export default function ClientPage() {
         ...prev,
         {
           roundNumber: currentQIndex + 1,
-          questionText: q.body,
+          questionText: getLocalizedText(q.body),
           questionType: q.type,
           isCorrect,
           userAnswer: userAns,
           correctAnswer: q.correctAnswer || q.orderingItems || q.matchingPairs,
-          explanation: q.explanation || '',
+          explanation: getLocalizedText(q.explanation),
           timeSpent: 30 - timeLeft
         }
       ]);
@@ -3897,9 +3988,12 @@ export default function ClientPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px', flexShrink: 0 }}>
               <button style={styles.backBtn} onClick={() => { playSFX('click'); setSelectedPack(null); fetchPacks(); }}>◀</button>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>{pack.title}</h2>
+                <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>
+                  {getLocalizedText(pack.title)}
+                  <span style={{ fontSize: '0.7rem', color: '#00ff87', marginLeft: '6px', marginRight: '6px', fontWeight: 'bold' }}>v{pack.version || 1}</span>
+                </h2>
                 <span style={{ fontSize: '0.65rem', color: '#8a93c0' }}>
-                  {pack.category} • {questions?.length || 0} {isRtl ? 'أسئلة' : 'questions'}
+                  {pack.category} • {questions?.length || 0} {isRtl ? 'أسئلة' : 'questions'} • {isRtl ? 'اللغة الافتراضية:' : 'Default Lang:'} {pack.defaultLanguage === 'ar' ? (isRtl ? 'العربية' : 'Arabic') : 'English'}
                 </span>
               </div>
               <span style={{
@@ -3917,7 +4011,58 @@ export default function ClientPage() {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
               <div style={{ padding: '12px', backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px' }}>
-                <p style={{ margin: '0 0 8px 0', fontSize: '0.8rem', color: '#8a93c0' }}>{pack.description || (isRtl ? 'لا يوجد وصف.' : 'No description available.')}</p>
+                <p style={{ margin: '0 0 8px 0', fontSize: '0.8rem', color: '#8a93c0' }}>{getLocalizedText(pack.description) || (isRtl ? 'لا يوجد وصف.' : 'No description available.')}</p>
+                
+                {pack.tags && pack.tags.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
+                    {pack.tags.map((t: string, idx: number) => (
+                      <span key={idx} style={{
+                        fontSize: '0.6rem',
+                        color: '#00f2fe',
+                        backgroundColor: 'rgba(0, 242, 254, 0.06)',
+                        border: '1px solid rgba(0, 242, 254, 0.15)',
+                        padding: '1px 5px',
+                        borderRadius: '3px'
+                      }}>
+                        #{t}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {pack.metadata && typeof pack.metadata === 'object' && (
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(4, 1fr)',
+                    gap: '8px',
+                    padding: '8px 12px',
+                    backgroundColor: 'rgba(255,255,255,0.01)',
+                    border: '1px solid rgba(255,255,255,0.04)',
+                    borderRadius: '6px',
+                    fontSize: '0.7rem',
+                    color: '#8a93c0',
+                    marginBottom: '8px',
+                    textAlign: 'center'
+                  }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <span style={{ fontWeight: 'bold', color: '#ffffff' }}>{pack.metadata.question_count || questions?.length || 0}</span>
+                      <span style={{ fontSize: '0.6rem' }}>{isRtl ? 'الأسئلة' : 'Questions'}</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <span style={{ fontWeight: 'bold', color: '#00ff87' }}>{pack.metadata.easy || 0}</span>
+                      <span style={{ fontSize: '0.6rem' }}>{isRtl ? 'سهل' : 'Easy'}</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <span style={{ fontWeight: 'bold', color: '#ffb300' }}>{pack.metadata.medium || 0}</span>
+                      <span style={{ fontSize: '0.6rem' }}>{isRtl ? 'متوسط' : 'Medium'}</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <span style={{ fontWeight: 'bold', color: '#ff3b5c' }}>{pack.metadata.hard || 0}</span>
+                      <span style={{ fontSize: '0.6rem' }}>{isRtl ? 'صعب' : 'Hard'}</span>
+                    </div>
+                  </div>
+                )}
+
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: '#ffffff' }}>
                   <span>✍️ {isRtl ? 'المنشئ:' : 'Creator:'} <strong style={{ color: '#00f2fe' }}>{pack.creatorUsername}</strong></span>
                   <span style={{ color: '#ffb300' }}>⭐ {pack.ratingAvg?.toFixed(1) || '0.0'} ({pack.ratingCount} {isRtl ? 'تقييمات' : 'reviews'})</span>
@@ -4137,8 +4282,8 @@ export default function ClientPage() {
                           ⭐ {pack.ratingAvg?.toFixed(1) || '0.0'} ({pack.ratingCount})
                         </span>
                       </div>
-                      <h3 style={{ margin: '4px 0', fontSize: '0.9rem', fontWeight: 700, color: '#ffffff' }}>{pack.title}</h3>
-                      <p style={{ margin: '0', fontSize: '0.75rem', color: '#8a93c0', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{pack.description}</p>
+                      <h3 style={{ margin: '4px 0', fontSize: '0.9rem', fontWeight: 700, color: '#ffffff' }}>{getLocalizedText(pack.title)}</h3>
+                      <p style={{ margin: '0', fontSize: '0.75rem', color: '#8a93c0', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{getLocalizedText(pack.description)}</p>
                       <span style={{ fontSize: '0.65rem', color: '#8a93c0', marginTop: '2px' }}>
                         ✍️ {isRtl ? 'المنشئ:' : 'Creator:'} <strong style={{ color: '#ffffff' }}>{pack.creatorUsername}</strong>
                       </span>
@@ -4160,7 +4305,7 @@ export default function ClientPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {packs.filter(p => p.creatorId === user?.id).map((pack) => (
                     <div
-                      key={pack.id}
+                       key={pack.id}
                       onClick={() => fetchPackDetails(pack.id)}
                       style={{
                         padding: '12px',
@@ -4189,8 +4334,8 @@ export default function ClientPage() {
                           {pack.isPublic ? (isRtl ? 'عامة' : 'Public') : (isRtl ? 'خاصة' : 'Private')}
                         </span>
                       </div>
-                      <h3 style={{ margin: '4px 0', fontSize: '0.9rem', fontWeight: 700, color: '#ffffff' }}>{pack.title}</h3>
-                      <p style={{ margin: '0', fontSize: '0.75rem', color: '#8a93c0' }}>{pack.description}</p>
+                      <h3 style={{ margin: '4px 0', fontSize: '0.9rem', fontWeight: 700, color: '#ffffff' }}>{getLocalizedText(pack.title)}</h3>
+                      <p style={{ margin: '0', fontSize: '0.75rem', color: '#8a93c0' }}>{getLocalizedText(pack.description)}</p>
                     </div>
                   ))}
                 </div>
@@ -4720,7 +4865,7 @@ export default function ClientPage() {
                               }}
                               style={{ cursor: 'pointer' }}
                             />
-                            <span>📦 {p.title} ({p.category})</span>
+                            <span>📦 {getLocalizedText(p.title)} ({p.category})</span>
                           </div>
                         );
                       })}
@@ -4776,13 +4921,17 @@ export default function ClientPage() {
                     </span>
                   </div>
                   <div style={styles.paramItem}>
-                    <span style={styles.paramLabel}>{isRtl ? 'حزمة الأسئلة:' : 'Question Source:'}</span>
+                    <span style={styles.paramLabel}>{isRtl ? 'حزم الأسئلة:' : 'Question Sources:'}</span>
                     <span style={styles.paramVal}>
                       {(() => {
-                        const packId = currentRoom.config?.questionPackId;
-                        if (!packId) return isRtl ? 'الافتراضي' : 'Default Pool';
-                        const matched = packs.find(p => p.id === packId);
-                        return matched ? `📦 ${matched.title}` : (isRtl ? 'حزمة مخصصة' : 'Custom Pack');
+                        const packIds = currentRoom.config?.questionPackIds || [];
+                        if (packIds.length === 0) return isRtl ? 'الافتراضي' : 'Default Pool';
+                        const names = packIds.map((id: string) => {
+                          const matched = packs.find(p => p.id === id);
+                          return matched ? getLocalizedText(matched.title) : null;
+                        }).filter(Boolean);
+                        if (names.length === 0) return isRtl ? 'حزم مخصصة' : 'Custom Packs';
+                        return `📦 ${names.join(', ')}`;
                       })()}
                     </span>
                   </div>
@@ -5452,7 +5601,7 @@ export default function ClientPage() {
                   </div>
                   
                   <div style={styles.qTextBody}>
-                    {gameQuestions[currentQIndex].body}
+                    {getLocalizedText(gameQuestions[currentQIndex].body)}
                   </div>
                   
                   {gameQuestions[currentQIndex].correctAnswer && (
@@ -5783,7 +5932,7 @@ export default function ClientPage() {
                 </div>
                 
                 <div style={styles.qTextBody}>
-                  {gameQuestions[currentQIndex].body}
+                  {getLocalizedText(gameQuestions[currentQIndex].body)}
                 </div>
 
                 {/* Buzzer Alert */}
@@ -5839,7 +5988,7 @@ export default function ClientPage() {
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span style={styles.optLetterBadge}>{opt.id.toUpperCase()}</span>
-                          <span style={styles.optText}>{opt.text}</span>
+                          <span style={styles.optText}>{getLocalizedText(opt.text)}</span>
                         </div>
                         {bt === 'TEAM_CONSULTATION' && teammateVotes[opt.id]?.length > 0 && (
                           <div style={{
@@ -5965,7 +6114,7 @@ export default function ClientPage() {
                       return (
                         <div key={id} style={styles.orderingCard}>
                           <span style={styles.orderLabelBadge}>{index + 1}</span>
-                          <span style={styles.orderingText}>{opt?.text}</span>
+                          <span style={styles.orderingText}>{getLocalizedText(opt?.text)}</span>
                           <div style={styles.orderControls}>
                             <button 
                               disabled={isInputDisabled || index === 0} 
@@ -6004,7 +6153,7 @@ export default function ClientPage() {
                               backgroundColor: matchingSelections[pair.leftId] ? 'rgba(0, 255, 135, 0.04)' : 'transparent'
                             }}
                           >
-                            {pair.leftText}
+                            {getLocalizedText(pair.leftText)}
                           </button>
                         ))}
                       </div>
@@ -6013,7 +6162,8 @@ export default function ClientPage() {
                         {gameQuestions[currentQIndex].matchingPairs?.map(pair => {
                           const isConnected = Object.values(matchingSelections).includes(pair.rightId);
                           const leftConnectedId = Object.keys(matchingSelections).find(key => matchingSelections[key] === pair.rightId);
-                          const leftText = leftConnectedId ? gameQuestions[currentQIndex].matchingPairs?.find(p => p.leftId === leftConnectedId)?.leftText.split('/')[0] : '';
+                          const leftTextObj = leftConnectedId ? gameQuestions[currentQIndex].matchingPairs?.find(p => p.leftId === leftConnectedId)?.leftText : null;
+                          const leftText = leftTextObj ? getLocalizedText(leftTextObj).split('/')[0] : '';
                           
                           return (
                             <button
@@ -6026,7 +6176,7 @@ export default function ClientPage() {
                                 backgroundColor: isConnected ? 'rgba(0, 255, 135, 0.04)' : 'transparent'
                               }}
                             >
-                              <div>{pair.rightText}</div>
+                              <div>{getLocalizedText(pair.rightText)}</div>
                               {isConnected && (
                                 <div style={styles.connectedMatchLabel}>
                                   {t.matchedPair}: {leftText}
@@ -6063,7 +6213,7 @@ export default function ClientPage() {
                           <span style={styles.optLetterBadge}>
                             {isSelected ? '✓' : opt.id.toUpperCase()}
                           </span>
-                          <span style={styles.optText}>{opt.text}</span>
+                          <span style={styles.optText}>{getLocalizedText(opt.text)}</span>
                         </button>
                       );
                     })}
@@ -6101,7 +6251,7 @@ export default function ClientPage() {
                     </div>
                   )}
                   <div style={styles.explanationText}>
-                    <strong>{t.explanation}:</strong> {gameQuestions[currentQIndex].explanation}
+                    <strong>{t.explanation}:</strong> {getLocalizedText(gameQuestions[currentQIndex].explanation)}
                   </div>
                 </div>
               )}
@@ -6130,7 +6280,7 @@ export default function ClientPage() {
                   )}
                   {spectatorExplanation && (
                     <div style={styles.explanationText}>
-                      <strong>{t.explanation}:</strong> {spectatorExplanation}
+                      <strong>{t.explanation}:</strong> {getLocalizedText(spectatorExplanation)}
                     </div>
                   )}
                   <div style={{ fontSize: '0.75rem', color: '#ffd700', marginTop: '8px', fontWeight: 'bold' }}>

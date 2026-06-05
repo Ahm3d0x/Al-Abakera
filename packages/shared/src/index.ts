@@ -60,24 +60,29 @@ export type QuestionType =
   | 'CODING_QUESTION'
   | 'SHORT_ANSWER';
 
+export interface LocalizedText {
+  ar: string;
+  en: string;
+}
+
 export interface QuestionOption {
   id: string;
-  text: string;
+  text: LocalizedText;
   imageUrl?: string;
 }
 
 export interface MatchingPair {
   leftId: string;
-  leftText: string;
+  leftText: LocalizedText;
   rightId: string;
-  rightText: string;
+  rightText: LocalizedText;
 }
 
 export interface Question {
   id: string;
   type: QuestionType;
   category: string;
-  body: string;
+  body: LocalizedText;
   imageUrl?: string; // Used for IMAGE_QUESTION or general illustration
   options?: QuestionOption[]; // Used for MULTIPLE_CHOICE, MULTI_SELECT
   correctAnswer?: string | string[]; // For single answer, true/false, fill-in-the-blank, multi-select (array of IDs)
@@ -86,7 +91,7 @@ export interface Question {
   codingTestCases?: { input: string; output: string }[]; // For CODING_QUESTION
   difficulty: 'Easy' | 'Medium' | 'Hard';
   rating: number; // 5-star rating system (0-5)
-  explanation?: string;
+  explanation?: LocalizedText;
   createdAt: Date;
 }
 
@@ -262,7 +267,7 @@ export interface AnswerSubmission {
 export interface GradingResult {
   isCorrect: boolean;
   score: number;
-  explanation?: string;
+  explanation?: string | LocalizedText;
   correctAnswer?: any; // returned only in practice or post-round contexts
 }
 
@@ -337,14 +342,25 @@ export interface TournamentParticipant {
 // ==========================================
 export interface QuestionPack {
   id: string;
-  title: string;
-  description: string | null;
+  title: LocalizedText;
+  description: LocalizedText | null;
   category: 'Science' | 'Math' | 'Electronics' | 'Programming' | 'Custom';
   isPublic: boolean;
   creatorId: string;
   creatorUsername?: string;
   ratingAvg: number;
   ratingCount: number;
+  defaultLanguage?: 'ar' | 'en';
+  version?: number;
+  tags?: string[];
+  metadata?: {
+    question_count?: number;
+    easy?: number;
+    medium?: number;
+    hard?: number;
+    estimated_time?: number;
+    [key: string]: any;
+  } | null;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -48,6 +48,10 @@ router.get('/', requireAuth as any, async (req: AuthenticatedRequest, res: Respo
       creatorUsername: p.profiles?.username || 'Creator',
       ratingAvg: Number(p.rating_avg || 0),
       ratingCount: Number(p.rating_count || 0),
+      defaultLanguage: p.default_language,
+      version: p.version,
+      tags: p.tags,
+      metadata: p.metadata,
       createdAt: p.created_at,
       updatedAt: p.updated_at,
     }));
@@ -129,6 +133,10 @@ router.get('/:id', requireAuth as any, async (req: AuthenticatedRequest, res: Re
         creatorUsername: pack.profiles?.username || 'Creator',
         ratingAvg: Number(pack.rating_avg || 0),
         ratingCount: Number(pack.rating_count || 0),
+        defaultLanguage: pack.default_language,
+        version: pack.version,
+        tags: pack.tags,
+        metadata: pack.metadata,
         createdAt: pack.created_at,
         updatedAt: pack.updated_at,
       },
@@ -143,7 +151,7 @@ router.get('/:id', requireAuth as any, async (req: AuthenticatedRequest, res: Re
 
 // 3. Create a new question pack
 router.post('/', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
-  const { title, description, category, isPublic, questions } = req.body;
+  const { title, description, category, isPublic, questions, defaultLanguage, version, tags } = req.body;
   const userId = req.profile?.id;
 
   if (!title || !category) {
@@ -177,7 +185,10 @@ router.post('/', requireAuth as any, async (req: AuthenticatedRequest, res: Resp
         description,
         category,
         is_public: !!isPublic,
-        creator_id: userId
+        creator_id: userId,
+        default_language: defaultLanguage || 'en',
+        version: version || 1,
+        tags: tags || []
       })
       .select()
       .single();
@@ -231,7 +242,7 @@ router.post('/', requireAuth as any, async (req: AuthenticatedRequest, res: Resp
 // 4. Update an existing question pack details
 router.put('/:id', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
-  const { title, description, category, isPublic } = req.body;
+  const { title, description, category, isPublic, defaultLanguage, version, tags } = req.body;
   const userId = req.profile?.id;
 
   try {
@@ -274,6 +285,9 @@ router.put('/:id', requireAuth as any, async (req: AuthenticatedRequest, res: Re
         description: description !== undefined ? description : pack.description,
         category: category !== undefined ? category : pack.category,
         is_public: isPublic !== undefined ? !!isPublic : pack.is_public,
+        default_language: defaultLanguage !== undefined ? defaultLanguage : pack.default_language,
+        version: version !== undefined ? version : pack.version,
+        tags: tags !== undefined ? tags : pack.tags,
         updated_at: new Date().toISOString()
       })
       .eq('id', id)
