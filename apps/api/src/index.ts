@@ -10,6 +10,7 @@ import { gradeAnswer } from './lib/grading';
 import questionsRouter from './routes/questions';
 import roomsRouter from './routes/rooms';
 import tournamentsRouter, { handleTournamentMatchCompletion } from './routes/tournaments';
+import packsRouter from './routes/packs';
 
 
 // Load environment variables
@@ -95,6 +96,7 @@ app.get('/api/v1/users/me', requireAuth as any, (req: AuthenticatedRequest, res)
 app.use('/api/v1/questions', questionsRouter);
 app.use('/api/v1/rooms', roomsRouter);
 app.use('/api/v1/tournaments', tournamentsRouter);
+app.use('/api/v1/packs', packsRouter);
 
 // Create HTTP server and initialize socket.io
 const httpServer = createServer(app);
@@ -693,11 +695,33 @@ io.on('connection', (socket) => {
       if (room && room.host_id === userId) {
         const roundsLimit = room.config?.roundsCount || 5;
 
-        // Query some questions from database matching rounds limit
-        const { data: dbQs } = await supabaseAdmin
-          .from('questions')
-          .select('*')
-          .limit(roundsLimit);
+        // Query questions matching rounds limit (support question packs)
+        let dbQs;
+        const packIds = room.config?.questionPackIds || (room.config?.questionPackId ? [room.config.questionPackId] : []);
+        if (packIds && packIds.length > 0) {
+          const { data: packItems } = await supabaseAdmin
+            .from('question_pack_items')
+            .select('question_id')
+            .in('pack_id', packIds);
+
+          if (packItems && packItems.length > 0) {
+            const questionIds = packItems.map((item: any) => item.question_id);
+            const { data } = await supabaseAdmin
+              .from('questions')
+              .select('*')
+              .in('id', questionIds)
+              .limit(roundsLimit);
+            dbQs = data;
+          }
+        }
+
+        if (!dbQs || dbQs.length === 0) {
+          const { data } = await supabaseAdmin
+            .from('questions')
+            .select('*')
+            .limit(roundsLimit);
+          dbQs = data;
+        }
 
         // Fallback to sample questions set if database has insufficient items
         const questionsList: Question[] = (dbQs && dbQs.length >= 3) 

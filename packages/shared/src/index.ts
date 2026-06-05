@@ -332,4 +332,37 @@ export interface TournamentParticipant {
   registeredAt: string;
 }
 
+// ==========================================
+// 9. Question Packs Definitions
+// ==========================================
+export interface QuestionPack {
+  id: string;
+  title: string;
+  description: string | null;
+  category: 'Science' | 'Math' | 'Electronics' | 'Programming' | 'Custom';
+  isPublic: boolean;
+  creatorId: string;
+  creatorUsername?: string;
+  ratingAvg: number;
+  ratingCount: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface QuestionPackItem {
+  packId: string;
+  questionId: string;
+}
+
+export interface QuestionPackReview {
+  id: string;
+  packId: string;
+  userId: string;
+  username?: string;
+  rating: number;
+  comment: string | null;
+  createdAt: Date;
+}
+
+
 

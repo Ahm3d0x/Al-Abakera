@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { BuzzerType, GameModeType, Question, TournamentFormat, GameEvents } from '@mind-race/shared';
+import { BuzzerType, GameModeType, Question, TournamentFormat, GameEvents, QuestionPack } from '@mind-race/shared';
 import { GameSyncService } from '../lib/gameSync';
 import { useAuth } from '../context/AuthContext';
 import { useRouter } from 'next/navigation';
@@ -306,6 +306,48 @@ export default function ClientPage() {
   const [loadingTournaments, setLoadingTournaments] = useState(false);
   const [creatingTournament, setCreatingTournament] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  // Question Packs States
+  const [viewingPacks, setViewingPacks] = useState(false);
+  const [packs, setPacks] = useState<QuestionPack[]>([]);
+  const [selectedPack, setSelectedPack] = useState<any>(null);
+  const [loadingPacks, setLoadingPacks] = useState(false);
+  const [creatingPack, setCreatingPack] = useState(false);
+  const [packTitle, setPackTitle] = useState('');
+  const [packDesc, setPackDesc] = useState('');
+  const [packCategory, setPackCategory] = useState<'Science' | 'Math' | 'Electronics' | 'Programming' | 'Custom'>('Science');
+  const [packIsPublic, setPackIsPublic] = useState(false);
+  
+  interface PackQuestionInput {
+    type: 'MULTIPLE_CHOICE' | 'TRUE_FALSE' | 'FILL_IN_THE_BLANK' | 'ORDERING_QUESTION' | 'MATCHING_QUESTION';
+    body: string;
+    imageUrl?: string;
+    options: { id: string; text: string }[];
+    correctAnswer: string;
+    orderingItems: string[];
+    matchingPairs: { leftId: string; leftText: string; rightId: string; rightText: string }[];
+    difficulty: 'Easy' | 'Medium' | 'Hard';
+    explanation: string;
+  }
+  const [packQuestions, setPackQuestions] = useState<PackQuestionInput[]>([
+    {
+      type: 'MULTIPLE_CHOICE',
+      body: '',
+      options: [
+        { id: 'a', text: '' },
+        { id: 'b', text: '' },
+        { id: 'c', text: '' },
+        { id: 'd', text: '' }
+      ],
+      correctAnswer: 'a',
+      orderingItems: [],
+      matchingPairs: [],
+      difficulty: 'Medium',
+      explanation: ''
+    }
+  ]);
+  const [packReviewRating, setPackReviewRating] = useState<number>(5);
+  const [packReviewComment, setPackReviewComment] = useState<string>('');
 
   // Forms state
   const [tourName, setTourName] = useState('');
@@ -3122,15 +3164,1060 @@ export default function ClientPage() {
         </div>
 
         <div style={styles.bottomNavMock}>
-          <span style={{ cursor: 'pointer' }} onClick={() => setViewingTournaments(false)}>🎒</span>
-          <span>🛒</span>
+          <span style={{ cursor: 'pointer' }} onClick={() => { setViewingTournaments(false); setViewingPacks(false); }}>🎒</span>
+          <span style={{ cursor: 'pointer' }} onClick={() => { setViewingTournaments(false); setViewingPacks(true); fetchPacks(); }}>📦</span>
           <span>⚔️</span>
           <span style={{ cursor: 'pointer', ...styles.activeNavTab }}>🏰</span>
-          <span style={{ cursor: 'pointer' }} onClick={() => { setViewingLeaderboard(true); loadLeaderboardData(); }}>🏆</span>
+          <span style={{ cursor: 'pointer' }} onClick={() => { setViewingTournaments(false); setViewingLeaderboard(true); loadLeaderboardData(); }}>🏆</span>
         </div>
       </div>
     );
   };
+  // ==========================================
+  // Question Packs API Operations & UI
+  // ==========================================
+  async function fetchPacks() {
+    setLoadingPacks(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const res = await fetch(`${API_URL}/api/v1/packs`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPacks(data);
+      } else {
+        console.error('Failed to fetch packs list');
+      }
+    } catch (e) {
+      console.error('Error fetching packs:', e);
+    } finally {
+      setLoadingPacks(false);
+    }
+  }
+
+  async function fetchPackDetails(id: string) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const res = await fetch(`${API_URL}/api/v1/packs/${id}`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedPack(data);
+      } else {
+        console.error('Failed to fetch pack details');
+      }
+    } catch (e) {
+      console.error('Error fetching pack details:', e);
+    }
+  }
+
+  const addPackQuestion = () => {
+    setPackQuestions(prev => [
+      ...prev,
+      {
+        type: 'MULTIPLE_CHOICE',
+        body: '',
+        options: [
+          { id: 'a', text: '' },
+          { id: 'b', text: '' },
+          { id: 'c', text: '' },
+          { id: 'd', text: '' }
+        ],
+        correctAnswer: 'a',
+        orderingItems: [],
+        matchingPairs: [],
+        difficulty: 'Medium',
+        explanation: ''
+      }
+    ]);
+  };
+
+  const removePackQuestion = (index: number) => {
+    if (packQuestions.length <= 1) {
+      triggerGamingAlert(isRtl ? 'يجب أن تحتوي الحزمة على سؤال واحد على الأقل.' : 'A pack must contain at least 1 question.', 'warning');
+      return;
+    }
+    setPackQuestions(prev => prev.filter((_, idx) => idx !== index));
+  };
+
+  const updatePackQuestion = (index: number, fields: Partial<PackQuestionInput>) => {
+    setPackQuestions(prev => prev.map((q, idx) => idx === index ? { ...q, ...fields } as PackQuestionInput : q));
+  };
+
+  async function handleCreatePack(e: React.FormEvent) {
+    e.preventDefault();
+    if (!packTitle.trim()) {
+      triggerGamingAlert(isRtl ? 'الرجاء إدخال اسم حزمة الأسئلة' : 'Please enter question pack title', 'warning');
+      return;
+    }
+    if (packQuestions.some(q => !q.body.trim())) {
+      triggerGamingAlert(isRtl ? 'الرجاء ملء نصوص جميع الأسئلة' : 'Please fill in bodies for all questions', 'warning');
+      return;
+    }
+
+    if (packIsPublic) {
+      const balance = user?.creatorTokens || 0;
+      if (balance < 5) {
+        triggerGamingAlert(
+          isRtl 
+            ? `رصيد التوكن غير كافٍ! نشر الحزمة العامة يتطلب 5 توكن. رصيدك الحالي: ${balance}`
+            : `Insufficient Creator Tokens! Public packs cost 5 Creator Tokens. Current balance: ${balance}`,
+          'error'
+        );
+        return;
+      }
+    }
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      
+      const formattedQuestions = packQuestions.map(q => {
+        const qData: any = {
+          type: q.type,
+          body: q.body,
+          difficulty: q.difficulty,
+          explanation: q.explanation,
+        };
+
+        if (q.imageUrl) qData.imageUrl = q.imageUrl;
+
+        if (q.type === 'MULTIPLE_CHOICE') {
+          qData.options = q.options.filter(o => o.text.trim() !== '');
+          qData.correctAnswer = q.correctAnswer;
+        } else if (q.type === 'TRUE_FALSE') {
+          qData.correctAnswer = q.correctAnswer;
+        } else if (q.type === 'FILL_IN_THE_BLANK') {
+          qData.correctAnswer = q.correctAnswer;
+        } else if (q.type === 'ORDERING_QUESTION') {
+          qData.options = q.orderingItems.map((text, idx) => ({ id: String(idx + 1), text }));
+          qData.orderingItems = q.orderingItems.map((_, idx) => String(idx + 1));
+        } else if (q.type === 'MATCHING_QUESTION') {
+          qData.matchingPairs = q.matchingPairs.filter(p => p.leftText.trim() !== '' && p.rightText.trim() !== '');
+        }
+        return qData;
+      });
+
+      const res = await fetch(`${API_URL}/api/v1/packs`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          title: packTitle,
+          description: packDesc,
+          category: packCategory,
+          isPublic: packIsPublic,
+          questions: formattedQuestions
+        })
+      });
+
+      if (res.ok) {
+        triggerGamingAlert(
+          isRtl 
+            ? (packIsPublic ? 'تم نشر حزمة الأسئلة العامة بنجاح! تم خصم 5 توكن.' : 'تم حفظ الحزمة الخاصة بنجاح!')
+            : (packIsPublic ? 'Public question pack published! 5 Tokens deducted.' : 'Private pack saved successfully!'),
+          'success'
+        );
+        setCreatingPack(false);
+        setPackTitle('');
+        setPackDesc('');
+        setPackCategory('Science');
+        setPackIsPublic(false);
+        setPackQuestions([
+          { type: 'MULTIPLE_CHOICE', body: '', options: [{ id: 'a', text: '' }, { id: 'b', text: '' }, { id: 'c', text: '' }, { id: 'd', text: '' }], correctAnswer: 'a', orderingItems: [], matchingPairs: [], difficulty: 'Medium', explanation: '' }
+        ]);
+        await fetchPacks();
+        await refreshProfile();
+      } else {
+        const err = await res.json();
+        triggerGamingAlert(err.error || (isRtl ? 'فشل إنشاء الحزمة' : 'Failed to create question pack'), 'error');
+      }
+    } catch (err) {
+      console.error('Create pack error:', err);
+      triggerGamingAlert(isRtl ? 'حدث خطأ أثناء إنشاء حزمة الأسئلة' : 'Error creating question pack', 'error');
+    }
+  }
+
+  async function handleDeletePack(id: string) {
+    if (!confirm(isRtl ? 'هل أنت متأكد من حذف هذه الحزمة؟' : 'Are you sure you want to delete this pack?')) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const res = await fetch(`${API_URL}/api/v1/packs/${id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        triggerGamingAlert(isRtl ? 'تم حذف الحزمة بنجاح' : 'Pack deleted successfully', 'success');
+        setSelectedPack(null);
+        await fetchPacks();
+      } else {
+        const err = await res.json();
+        triggerGamingAlert(err.error || 'Failed to delete pack', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function handleSubmitReview(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedPack) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const res = await fetch(`${API_URL}/api/v1/packs/${selectedPack.pack.id}/reviews`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          rating: packReviewRating,
+          comment: packReviewComment
+        })
+      });
+      if (res.ok) {
+        triggerGamingAlert(isRtl ? 'تمت إضافة مراجعتك بنجاح!' : 'Review submitted successfully!', 'success');
+        setPackReviewComment('');
+        await fetchPackDetails(selectedPack.pack.id);
+        await fetchPacks();
+      } else {
+        const err = await res.json();
+        triggerGamingAlert(err.error || 'Failed to submit review', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  const renderPacksView = () => {
+    if (creatingPack) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px', flexShrink: 0 }}>
+              <button style={styles.backBtn} onClick={() => setCreatingPack(false)}>◀</button>
+              <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>
+                {isRtl ? 'إنشاء حزمة أسئلة جديدة' : 'Create Question Pack'}
+              </h2>
+            </div>
+
+            <form onSubmit={handleCreatePack} style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', flex: 1, paddingRight: '4px', minHeight: 0 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '0.75rem', color: '#8a93c0' }}>{isRtl ? 'عنوان الحزمة' : 'Pack Title'}</label>
+                <input
+                  type="text"
+                  required
+                  placeholder={isRtl ? 'أدخل عنوان الحزمة...' : 'Enter pack title...'}
+                  value={packTitle}
+                  onChange={(e) => setPackTitle(e.target.value)}
+                  style={{
+                    padding: '10px',
+                    borderRadius: '6px',
+                    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    color: '#ffffff',
+                    fontSize: '0.85rem'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '0.75rem', color: '#8a93c0' }}>{isRtl ? 'الوصف' : 'Description'}</label>
+                <textarea
+                  placeholder={isRtl ? 'أدخل وصفاً للحزمة...' : 'Enter description...'}
+                  value={packDesc}
+                  onChange={(e) => setPackDesc(e.target.value)}
+                  style={{
+                    padding: '10px',
+                    borderRadius: '6px',
+                    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    color: '#ffffff',
+                    fontSize: '0.85rem',
+                    minHeight: '50px',
+                    resize: 'none'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label style={{ fontSize: '0.75rem', color: '#8a93c0' }}>{isRtl ? 'التصنيف' : 'Category'}</label>
+                  <select
+                    value={packCategory}
+                    onChange={(e: any) => setPackCategory(e.target.value)}
+                    style={{
+                      padding: '10px',
+                      borderRadius: '6px',
+                      backgroundColor: '#111528',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      color: '#ffffff',
+                      fontSize: '0.85rem'
+                    }}
+                  >
+                    <option value="Science">Science</option>
+                    <option value="Math">Math</option>
+                    <option value="Electronics">Electronics</option>
+                    <option value="Programming">Programming</option>
+                    <option value="Custom">Custom</option>
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label style={{ fontSize: '0.75rem', color: '#8a93c0' }}>{isRtl ? 'الخصوصية' : 'Privacy'}</label>
+                  <select
+                    value={packIsPublic ? 'true' : 'false'}
+                    onChange={(e) => setPackIsPublic(e.target.value === 'true')}
+                    style={{
+                      padding: '10px',
+                      borderRadius: '6px',
+                      backgroundColor: '#111528',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      color: '#ffffff',
+                      fontSize: '0.85rem'
+                    }}
+                  >
+                    <option value="false">{isRtl ? 'خاصة (مجانًا)' : 'Private (Free)'}</option>
+                    <option value="true">{isRtl ? 'عامة (5 توكن)' : 'Public (5 Tokens)'}</option>
+                  </select>
+                </div>
+              </div>
+
+              {packIsPublic && (
+                <div style={{
+                  padding: '10px',
+                  backgroundColor: 'rgba(255, 179, 0, 0.06)',
+                  border: '1px solid #ffb300',
+                  borderRadius: '6px',
+                  color: '#ffb300',
+                  fontSize: '0.75rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px'
+                }}>
+                  <span style={{ fontWeight: 'bold' }}>
+                    ⚠️ {isRtl ? 'تنبيه تكلفة النشر العام:' : 'Creator Token Gating Warning:'}
+                  </span>
+                  <span>
+                    {isRtl 
+                      ? `سيتم خصم 5 توكن من رصيدك عند النشر. رصيدك الحالي: ${user?.creatorTokens || 0} توكن.`
+                      : `Publishing this pack publicly will deduct 5 Creator Tokens from your profile. Current Balance: ${user?.creatorTokens || 0} Tokens.`}
+                  </span>
+                  {(user?.creatorTokens || 0) < 5 && (
+                    <span style={{ color: '#ff3b5c', fontWeight: 'bold', marginTop: '2px' }}>
+                      ❌ {isRtl ? 'ليس لديك توكن كافية!' : 'You do not have enough tokens to publish publicly!'}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>
+                    {isRtl ? 'الأسئلة المضافة' : 'Questions'} ({packQuestions.length})
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={addPackQuestion}
+                    style={{
+                      padding: '4px 10px',
+                      backgroundColor: 'rgba(0, 242, 254, 0.1)',
+                      border: '1px solid #00f2fe',
+                      color: '#00f2fe',
+                      borderRadius: '4px',
+                      fontSize: '0.75rem',
+                      cursor: 'pointer',
+                      fontWeight: 'bold'
+                    }}
+                  >
+                    ➕ {isRtl ? 'إضافة سؤال' : 'Add Question'}
+                  </button>
+                </div>
+
+                {packQuestions.map((q, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      padding: '12px',
+                      backgroundColor: 'rgba(255, 255, 255, 0.01)',
+                      border: '1px solid rgba(255, 255, 255, 0.05)',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#00f2fe' }}>
+                        #{idx + 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removePackQuestion(idx)}
+                        style={{
+                          padding: '2px 6px',
+                          backgroundColor: 'rgba(255, 59, 92, 0.1)',
+                          border: '1px solid #ff3b5c',
+                          color: '#ff3b5c',
+                          borderRadius: '4px',
+                          fontSize: '0.7rem',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        🗑️ {isRtl ? 'حذف' : 'Delete'}
+                      </button>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'نوع السؤال' : 'Question Type'}</label>
+                        <select
+                          value={q.type}
+                          onChange={(e: any) => {
+                            const newType = e.target.value;
+                            const defaults: Partial<PackQuestionInput> = { type: newType };
+                            if (newType === 'MULTIPLE_CHOICE') {
+                              defaults.options = [{ id: 'a', text: '' }, { id: 'b', text: '' }, { id: 'c', text: '' }, { id: 'd', text: '' }];
+                              defaults.correctAnswer = 'a';
+                            } else if (newType === 'TRUE_FALSE') {
+                              defaults.options = [];
+                              defaults.correctAnswer = 'true';
+                            } else if (newType === 'FILL_IN_THE_BLANK') {
+                              defaults.options = [];
+                              defaults.correctAnswer = '';
+                            } else if (newType === 'ORDERING_QUESTION') {
+                              defaults.orderingItems = ['', '', '', ''];
+                              defaults.correctAnswer = '';
+                            } else if (newType === 'MATCHING_QUESTION') {
+                              defaults.matchingPairs = [
+                                { leftId: 'l1', leftText: '', rightId: 'r1', rightText: '' },
+                                { leftId: 'l2', leftText: '', rightId: 'r2', rightText: '' },
+                                { leftId: 'l3', leftText: '', rightId: 'r3', rightText: '' }
+                              ];
+                              defaults.correctAnswer = '';
+                            }
+                            updatePackQuestion(idx, defaults);
+                          }}
+                          style={{
+                            padding: '6px',
+                            borderRadius: '4px',
+                            backgroundColor: '#0b0d1a',
+                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                            color: '#ffffff',
+                            fontSize: '0.75rem'
+                          }}
+                        >
+                          <option value="MULTIPLE_CHOICE">Multiple Choice</option>
+                          <option value="TRUE_FALSE">True/False</option>
+                          <option value="FILL_IN_THE_BLANK">Fill in the Blank</option>
+                          <option value="ORDERING_QUESTION">Ordering</option>
+                          <option value="MATCHING_QUESTION">Matching</option>
+                        </select>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'الصعوبة' : 'Difficulty'}</label>
+                        <select
+                          value={q.difficulty}
+                          onChange={(e: any) => updatePackQuestion(idx, { difficulty: e.target.value })}
+                          style={{
+                            padding: '6px',
+                            borderRadius: '4px',
+                            backgroundColor: '#0b0d1a',
+                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                            color: '#ffffff',
+                            fontSize: '0.75rem'
+                          }}
+                        >
+                          <option value="Easy">Easy</option>
+                          <option value="Medium">Medium</option>
+                          <option value="Hard">Hard</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'نص السؤال' : 'Question Text'}</label>
+                      <textarea
+                        required
+                        placeholder={isRtl ? 'أدخل نص السؤال...' : 'Enter question text...'}
+                        value={q.body}
+                        onChange={(e) => updatePackQuestion(idx, { body: e.target.value })}
+                        style={{
+                          padding: '8px',
+                          borderRadius: '4px',
+                          backgroundColor: 'rgba(255,255,255,0.02)',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          color: '#ffffff',
+                          fontSize: '0.8rem',
+                          minHeight: '40px',
+                          resize: 'none'
+                        }}
+                      />
+                    </div>
+
+                    {q.type === 'MULTIPLE_CHOICE' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'الخيارات المتاحة والإجابة الصحيحة' : 'Options & Correct Answer'}</label>
+                        {q.options.map((opt, oIdx) => (
+                          <div key={opt.id} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontSize: '0.75rem', width: '15px', color: '#8a93c0' }}>{opt.id.toUpperCase()}</span>
+                            <input
+                              type="text"
+                              required
+                              placeholder={`Option ${opt.id.toUpperCase()}`}
+                              value={opt.text}
+                              onChange={(e) => {
+                                const newOpts = [...q.options];
+                                newOpts[oIdx] = { ...opt, text: e.target.value };
+                                updatePackQuestion(idx, { options: newOpts });
+                              }}
+                              style={{
+                                flex: 1,
+                                padding: '6px',
+                                borderRadius: '4px',
+                                backgroundColor: 'rgba(255,255,255,0.01)',
+                                border: '1px solid rgba(255, 255, 255, 0.08)',
+                                color: '#ffffff',
+                                fontSize: '0.75rem'
+                              }}
+                            />
+                            <input
+                              type="radio"
+                              name={`correct-${idx}`}
+                              checked={q.correctAnswer === opt.id}
+                              onChange={() => updatePackQuestion(idx, { correctAnswer: opt.id })}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {q.type === 'TRUE_FALSE' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'الإجابة الصحيحة' : 'Correct Answer'}</label>
+                        <select
+                          value={q.correctAnswer}
+                          onChange={(e) => updatePackQuestion(idx, { correctAnswer: e.target.value })}
+                          style={{
+                            padding: '6px',
+                            borderRadius: '4px',
+                            backgroundColor: '#0b0d1a',
+                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                            color: '#ffffff',
+                            fontSize: '0.75rem'
+                          }}
+                        >
+                          <option value="true">{isRtl ? 'صح' : 'True'}</option>
+                          <option value="false">{isRtl ? 'خطأ' : 'False'}</option>
+                        </select>
+                      </div>
+                    )}
+
+                    {q.type === 'FILL_IN_THE_BLANK' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'الإجابة الصحيحة' : 'Correct Answer'}</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder={isRtl ? 'أدخل الإجابة الصحيحة الدقيقة...' : 'Enter the exact correct answer...'}
+                          value={q.correctAnswer}
+                          onChange={(e) => updatePackQuestion(idx, { correctAnswer: e.target.value })}
+                          style={{
+                            padding: '6px',
+                            borderRadius: '4px',
+                            backgroundColor: 'rgba(255,255,255,0.01)',
+                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                            color: '#ffffff',
+                            fontSize: '0.75rem'
+                          }}
+                        />
+                      </div>
+                    )}
+
+                    {q.type === 'ORDERING_QUESTION' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'رتب العناصر بالترتيب الصحيح (من الأعلى للأسفل)' : 'Enter items in correct order (Top to Bottom)'}</label>
+                        {[0, 1, 2, 3].map((orderIdx) => (
+                          <div key={orderIdx} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontSize: '0.75rem', width: '15px', color: '#8a93c0' }}>{orderIdx + 1}</span>
+                            <input
+                              type="text"
+                              required
+                              placeholder={`Item ${orderIdx + 1}`}
+                              value={q.orderingItems[orderIdx] || ''}
+                              onChange={(e) => {
+                                const newItems = [...q.orderingItems];
+                                newItems[orderIdx] = e.target.value;
+                                updatePackQuestion(idx, { orderingItems: newItems });
+                              }}
+                              style={{
+                                flex: 1,
+                                padding: '6px',
+                                borderRadius: '4px',
+                                backgroundColor: 'rgba(255,255,255,0.01)',
+                                border: '1px solid rgba(255, 255, 255, 0.08)',
+                                color: '#ffffff',
+                                fontSize: '0.75rem'
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {q.type === 'MATCHING_QUESTION' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'أدخل أزواج التوصيل المتطابقة' : 'Enter matching pairs'}</label>
+                        {[0, 1, 2].map((pairIdx) => {
+                          const pair = q.matchingPairs[pairIdx] || { leftId: `l${pairIdx+1}`, leftText: '', rightId: `r${pairIdx+1}`, rightText: '' };
+                          return (
+                            <div key={pairIdx} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                              <input
+                                type="text"
+                                required
+                                placeholder={`Left Term ${pairIdx + 1}`}
+                                value={pair.leftText}
+                                onChange={(e) => {
+                                  const newPairs = [...q.matchingPairs];
+                                  newPairs[pairIdx] = { ...pair, leftText: e.target.value };
+                                  updatePackQuestion(idx, { matchingPairs: newPairs });
+                                }}
+                                style={{
+                                  padding: '6px',
+                                  borderRadius: '4px',
+                                  backgroundColor: 'rgba(255,255,255,0.01)',
+                                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                                  color: '#ffffff',
+                                  fontSize: '0.75rem'
+                                }}
+                              />
+                              <input
+                                type="text"
+                                required
+                                placeholder={`Matching Definition ${pairIdx + 1}`}
+                                value={pair.rightText}
+                                onChange={(e) => {
+                                  const newPairs = [...q.matchingPairs];
+                                  newPairs[pairIdx] = { ...pair, rightText: e.target.value };
+                                  updatePackQuestion(idx, { matchingPairs: newPairs });
+                                }}
+                                style={{
+                                  padding: '6px',
+                                  borderRadius: '4px',
+                                  backgroundColor: 'rgba(255,255,255,0.01)',
+                                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                                  color: '#ffffff',
+                                  fontSize: '0.75rem'
+                                }}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'شرح الحل' : 'Explanation'}</label>
+                      <textarea
+                        placeholder={isRtl ? 'أدخل شرحاً للحل الصحيح...' : 'Enter solution explanation...'}
+                        value={q.explanation}
+                        onChange={(e) => updatePackQuestion(idx, { explanation: e.target.value })}
+                        style={{
+                          padding: '6px',
+                          borderRadius: '4px',
+                          backgroundColor: 'rgba(255,255,255,0.02)',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          color: '#ffffff',
+                          fontSize: '0.75rem',
+                          minHeight: '35px',
+                          resize: 'none'
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="submit"
+                disabled={packIsPublic && (user?.creatorTokens || 0) < 5}
+                style={{
+                  marginTop: '10px',
+                  padding: '12px',
+                  borderRadius: '6px',
+                  background: packIsPublic && (user?.creatorTokens || 0) < 5
+                    ? 'rgba(255,255,255,0.08)'
+                    : 'linear-gradient(135deg, #00f2fe 0%, #4facfe 100%)',
+                  color: packIsPublic && (user?.creatorTokens || 0) < 5 ? '#8a93c0' : '#05060f',
+                  fontWeight: 'bold',
+                  border: 'none',
+                  cursor: packIsPublic && (user?.creatorTokens || 0) < 5 ? 'not-allowed' : 'pointer',
+                  boxShadow: packIsPublic && (user?.creatorTokens || 0) < 5 ? 'none' : '0 4px 15px rgba(0, 242, 254, 0.3)'
+                }}
+              >
+                {isRtl ? 'تأكيد إنشاء الحزمة' : 'Confirm Pack Creation'}
+              </button>
+            </form>
+          </div>
+
+          <div style={styles.bottomNavMock}>
+            <span style={{ cursor: 'pointer' }} onClick={() => { setCreatingPack(false); setViewingPacks(false); }}>🎒</span>
+            <span style={{ cursor: 'pointer', ...styles.activeNavTab }}>📦</span>
+            <span>⚔️</span>
+            <span style={{ cursor: 'pointer' }} onClick={() => { setCreatingPack(false); setViewingTournaments(true); fetchTournaments(); }}>🏰</span>
+            <span style={{ cursor: 'pointer' }} onClick={() => { setCreatingPack(false); setViewingLeaderboard(true); loadLeaderboardData(); }}>🏆</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (selectedPack) {
+      const { pack, questions, reviews } = selectedPack;
+      const isCreator = pack.creatorId === user?.id;
+      const hasReviewed = reviews?.some((r: any) => r.userId === user?.id);
+
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px', flexShrink: 0 }}>
+              <button style={styles.backBtn} onClick={() => { playSFX('click'); setSelectedPack(null); fetchPacks(); }}>◀</button>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>{pack.title}</h2>
+                <span style={{ fontSize: '0.65rem', color: '#8a93c0' }}>
+                  {pack.category} • {questions?.length || 0} {isRtl ? 'أسئلة' : 'questions'}
+                </span>
+              </div>
+              <span style={{
+                marginLeft: 'auto',
+                fontSize: '0.65rem',
+                backgroundColor: pack.isPublic ? 'rgba(0, 255, 135, 0.1)' : 'rgba(255, 59, 92, 0.1)',
+                color: pack.isPublic ? '#00ff87' : '#ff3b5c',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                fontWeight: 'bold'
+              }}>
+                {pack.isPublic ? (isRtl ? 'عامة' : 'Public') : (isRtl ? 'خاصة' : 'Private')}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
+              <div style={{ padding: '12px', backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px' }}>
+                <p style={{ margin: '0 0 8px 0', fontSize: '0.8rem', color: '#8a93c0' }}>{pack.description || (isRtl ? 'لا يوجد وصف.' : 'No description available.')}</p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: '#ffffff' }}>
+                  <span>✍️ {isRtl ? 'المنشئ:' : 'Creator:'} <strong style={{ color: '#00f2fe' }}>{pack.creatorUsername}</strong></span>
+                  <span style={{ color: '#ffb300' }}>⭐ {pack.ratingAvg?.toFixed(1) || '0.0'} ({pack.ratingCount} {isRtl ? 'تقييمات' : 'reviews'})</span>
+                </div>
+              </div>
+
+              {isCreator && (
+                <button
+                  onClick={() => handleDeletePack(pack.id)}
+                  style={{
+                    padding: '8px',
+                    backgroundColor: 'rgba(255, 59, 92, 0.1)',
+                    border: '1px solid #ff3b5c',
+                    color: '#ff3b5c',
+                    borderRadius: '6px',
+                    fontSize: '0.75rem',
+                    fontWeight: 'bold',
+                    cursor: 'pointer'
+                  }}
+                >
+                  🗑️ {isRtl ? 'حذف حزمة الأسئلة بالكامل' : 'Delete Entire Question Pack'}
+                </button>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <h4 style={{ margin: '4px 0', fontSize: '0.85rem', color: '#ffffff', fontWeight: 'bold' }}>
+                  {isRtl ? 'قائمة الأسئلة' : 'Questions List'}
+                </h4>
+                {questions?.map((q: any, qIdx: number) => (
+                  <div key={q.id || qIdx} style={{ padding: '10px', backgroundColor: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem' }}>
+                      <span style={{ color: '#00f2fe', fontWeight: 'bold' }}>Q{qIdx + 1} ({q.type})</span>
+                      <span style={{ color: '#8a93c0' }}>{q.difficulty}</span>
+                    </div>
+                    <p style={{ margin: '4px 0', fontSize: '0.8rem', color: '#ffffff' }}>{q.body}</p>
+                    
+                    {isCreator && (
+                      <div style={{ marginTop: '4px', padding: '6px', backgroundColor: 'rgba(0, 255, 135, 0.04)', border: '1px solid rgba(0, 255, 135, 0.1)', borderRadius: '4px', fontSize: '0.75rem', color: '#00ff87' }}>
+                        <span>🔑 {isRtl ? 'الإجابة النموذجية:' : 'Answer Key:'} </span>
+                        <strong>{String(q.correctAnswer || q.correct_answer || '')}</strong>
+                      </div>
+                    )}
+                    {q.explanation && (
+                      <span style={{ fontSize: '0.7rem', color: '#8a93c0', fontStyle: 'italic' }}>
+                        💡 {q.explanation}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {pack.isPublic && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '10px' }}>
+                  <h4 style={{ margin: '4px 0', fontSize: '0.85rem', color: '#ffffff', fontWeight: 'bold' }}>
+                    {isRtl ? 'التقييمات والمراجعات' : 'Ratings & Reviews'}
+                  </h4>
+
+                  {!isCreator && !hasReviewed && (
+                    <form onSubmit={handleSubmitReview} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px', backgroundColor: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '8px' }}>
+                      <span style={{ fontSize: '0.75rem', color: '#ffffff', fontWeight: 'bold' }}>
+                        {isRtl ? 'أضف تقييمك للحزمة:' : 'Rate this question pack:'}
+                      </span>
+                      
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <span
+                            key={star}
+                            onClick={() => setPackReviewRating(star)}
+                            style={{
+                              cursor: 'pointer',
+                              fontSize: '1.2rem',
+                              color: star <= packReviewRating ? '#ffb300' : 'rgba(255,255,255,0.1)'
+                            }}
+                          >
+                            ★
+                          </span>
+                        ))}
+                      </div>
+
+                      <input
+                        type="text"
+                        placeholder={isRtl ? 'اكتب تعليقك هنا (اختياري)...' : 'Write a comment (optional)...'}
+                        value={packReviewComment}
+                        onChange={(e) => setPackReviewComment(e.target.value)}
+                        style={{
+                          padding: '8px',
+                          borderRadius: '4px',
+                          backgroundColor: '#0b0d1a',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          color: '#ffffff',
+                          fontSize: '0.75rem'
+                        }}
+                      />
+
+                      <button
+                        type="submit"
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: '#00f2fe',
+                          color: '#05060f',
+                          border: 'none',
+                          borderRadius: '4px',
+                          fontSize: '0.75rem',
+                          fontWeight: 'bold',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {isRtl ? 'إرسال التقييم' : 'Submit Review'}
+                      </button>
+                    </form>
+                  )}
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {reviews && reviews.length > 0 ? (
+                      reviews.map((r: any) => (
+                        <div key={r.id} style={{ padding: '8px 12px', backgroundColor: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                            <span style={{ color: '#00f2fe', fontWeight: 'bold' }}>{r.username}</span>
+                            <span style={{ color: '#ffb300' }}>{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
+                          </div>
+                          {r.comment && <p style={{ margin: '4px 0 0 0', fontSize: '0.75rem', color: '#ffffff' }}>{r.comment}</p>}
+                        </div>
+                      ))
+                    ) : (
+                      <span style={{ fontSize: '0.75rem', color: '#8a93c0', fontStyle: 'italic' }}>
+                        {isRtl ? 'لا توجد مراجعات بعد.' : 'No reviews posted yet.'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div style={styles.bottomNavMock}>
+            <span style={{ cursor: 'pointer' }} onClick={() => { setSelectedPack(null); setViewingPacks(false); }}>🎒</span>
+            <span style={{ cursor: 'pointer', ...styles.activeNavTab }} onClick={() => { setSelectedPack(null); fetchPacks(); }}>📦</span>
+            <span>⚔️</span>
+            <span style={{ cursor: 'pointer' }} onClick={() => { setSelectedPack(null); setViewingTournaments(true); fetchTournaments(); }}>🏰</span>
+            <span style={{ cursor: 'pointer' }} onClick={() => { setSelectedPack(null); setViewingLeaderboard(true); loadLeaderboardData(); }}>🏆</span>
+          </div>
+        </div>
+      );
+    }
+
+    const publicPacks = packs.filter(p => p.isPublic);
+    const privatePacks = packs.filter(p => !p.isPublic);
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexShrink: 0 }}>
+            <div>
+              <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>
+                {isRtl ? 'حزم الأسئلة المخصصة' : 'Question Packs'}
+              </h2>
+              <span style={{ fontSize: '0.65rem', color: '#8a93c0' }}>
+                {isRtl ? 'إنشاء ولعب وتقييم حزم الأسئلة' : 'Create, play, and rate question pools'}
+              </span>
+            </div>
+            <button
+              onClick={() => { playSFX('click'); setCreatingPack(true); }}
+              style={{
+                padding: '6px 12px',
+                background: 'linear-gradient(135deg, #00f2fe 0%, #4facfe 100%)',
+                color: '#05060f',
+                fontWeight: 'bold',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '0.75rem',
+                cursor: 'pointer',
+                boxShadow: '0 2px 8px rgba(0, 242, 254, 0.2)'
+              }}
+            >
+              ➕ {isRtl ? 'إنشاء حزمة' : 'Create Pack'}
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, overflowY: 'auto', paddingRight: '4px', minHeight: 0 }}>
+            {loadingPacks ? (
+              <div style={{ padding: '20px', textAlign: 'center', color: '#00f2fe', fontSize: '0.85rem' }}>
+                {isRtl ? 'جاري تحميل الحزم...' : 'Loading packs...'}
+              </div>
+            ) : (
+              <>
+                <div>
+                  <h4 style={{ margin: '4px 0', fontSize: '0.8rem', color: '#ffd700', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    🌎 {isRtl ? 'حزم عامة للاستكشاف' : 'Explore Public Packs'}
+                  </h4>
+              {publicPacks.length === 0 ? (
+                <div style={{ padding: '15px', textAlign: 'center', color: '#8a93c0', fontSize: '0.75rem', backgroundColor: 'rgba(255,255,255,0.01)', border: '1px dashed rgba(255,255,255,0.05)', borderRadius: '6px' }}>
+                  {isRtl ? 'لا توجد حزم عامة منشورة حاليًا.' : 'No public packs available yet.'}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {publicPacks.map((pack) => (
+                    <div
+                      key={pack.id}
+                      onClick={() => fetchPackDetails(pack.id)}
+                      style={{
+                        padding: '12px',
+                        backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                        border: '1px solid rgba(255, 255, 255, 0.05)',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '4px'
+                      }}
+                      className="hover-card-neon"
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.7rem', color: '#00f2fe', fontWeight: 'bold', backgroundColor: 'rgba(0, 242, 254, 0.08)', padding: '2px 6px', borderRadius: '4px' }}>
+                          {pack.category}
+                        </span>
+                        <span style={{ fontSize: '0.7rem', color: '#ffb300' }}>
+                          ⭐ {pack.ratingAvg?.toFixed(1) || '0.0'} ({pack.ratingCount})
+                        </span>
+                      </div>
+                      <h3 style={{ margin: '4px 0', fontSize: '0.9rem', fontWeight: 700, color: '#ffffff' }}>{pack.title}</h3>
+                      <p style={{ margin: '0', fontSize: '0.75rem', color: '#8a93c0', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{pack.description}</p>
+                      <span style={{ fontSize: '0.65rem', color: '#8a93c0', marginTop: '2px' }}>
+                        ✍️ {isRtl ? 'المنشئ:' : 'Creator:'} <strong style={{ color: '#ffffff' }}>{pack.creatorUsername}</strong>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginTop: '10px' }}>
+              <h4 style={{ margin: '4px 0', fontSize: '0.8rem', color: '#00ff87', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                📦 {isRtl ? 'حزمي الخاصة' : 'My Packs'}
+              </h4>
+              {privatePacks.length === 0 && packs.filter(p => p.creatorId === user?.id && p.isPublic).length === 0 ? (
+                <div style={{ padding: '15px', textAlign: 'center', color: '#8a93c0', fontSize: '0.75rem', backgroundColor: 'rgba(255,255,255,0.01)', border: '1px dashed rgba(255,255,255,0.05)', borderRadius: '6px' }}>
+                  {isRtl ? 'لم تقم بإنشاء أي حزم مخصصة بعد.' : 'You have not created any packs yet.'}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {packs.filter(p => p.creatorId === user?.id).map((pack) => (
+                    <div
+                      key={pack.id}
+                      onClick={() => fetchPackDetails(pack.id)}
+                      style={{
+                        padding: '12px',
+                        backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                        border: `1px solid ${pack.isPublic ? 'rgba(0, 255, 135, 0.15)' : 'rgba(255, 59, 92, 0.15)'}`,
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '4px'
+                      }}
+                      className="hover-card-neon"
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.7rem', color: '#00f2fe', fontWeight: 'bold' }}>
+                          {pack.category}
+                        </span>
+                        <span style={{
+                          fontSize: '0.65rem',
+                          backgroundColor: pack.isPublic ? 'rgba(0, 255, 135, 0.1)' : 'rgba(255, 59, 92, 0.1)',
+                          color: pack.isPublic ? '#00ff87' : '#ff3b5c',
+                          padding: '1px 5px',
+                          borderRadius: '3px',
+                          fontWeight: 'bold'
+                        }}>
+                          {pack.isPublic ? (isRtl ? 'عامة' : 'Public') : (isRtl ? 'خاصة' : 'Private')}
+                        </span>
+                      </div>
+                      <h3 style={{ margin: '4px 0', fontSize: '0.9rem', fontWeight: 700, color: '#ffffff' }}>{pack.title}</h3>
+                      <p style={{ margin: '0', fontSize: '0.75rem', color: '#8a93c0' }}>{pack.description}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+
+        <div style={styles.bottomNavMock}>
+          <span style={{ cursor: 'pointer' }} onClick={() => { setViewingPacks(false); }}>🎒</span>
+          <span style={{ cursor: 'pointer', ...styles.activeNavTab }} onClick={fetchPacks}>📦</span>
+          <span>⚔️</span>
+          <span style={{ cursor: 'pointer' }} onClick={() => { setViewingPacks(false); setViewingTournaments(true); fetchTournaments(); }}>🏰</span>
+          <span style={{ cursor: 'pointer' }} onClick={() => { setViewingPacks(false); setViewingLeaderboard(true); loadLeaderboardData(); }}>🏆</span>
+        </div>
+      </div>
+    );
+  };
+  
+  // Real-time listener/display trigger for Question Packs config
+  useEffect(() => {
+    if (screen === 'lobby' && currentRoom) {
+      fetchPacks();
+    }
+  }, [screen, currentRoom?.id]);
 
   const t = isRtl ? text.ar : text.en;
 
@@ -3240,15 +4327,17 @@ export default function ClientPage() {
                 </div>
 
                 <div style={styles.bottomNavMock}>
-                  <span style={{ cursor: 'pointer' }} onClick={() => { setViewingLeaderboard(false); setViewingTournaments(false); }}>🎒</span>
-                  <span>🛒</span>
+                  <span style={{ cursor: 'pointer' }} onClick={() => { setViewingLeaderboard(false); setViewingTournaments(false); setViewingPacks(false); }}>🎒</span>
+                  <span style={{ cursor: 'pointer' }} onClick={() => { setViewingLeaderboard(false); setViewingTournaments(false); setViewingPacks(true); fetchPacks(); }}>📦</span>
                   <span>⚔️</span>
-                  <span style={{ cursor: 'pointer' }} onClick={() => { setViewingLeaderboard(false); setViewingTournaments(true); fetchTournaments(); }}>🏰</span>
+                  <span style={{ cursor: 'pointer' }} onClick={() => { setViewingLeaderboard(false); setViewingTournaments(true); setViewingPacks(false); fetchTournaments(); }}>🏰</span>
                   <span style={{ cursor: 'pointer', ...styles.activeNavTab }} onClick={loadLeaderboardData}>🏆</span>
                 </div>
               </div>
             ) : viewingTournaments ? (
               renderTournamentsView()
+            ) : viewingPacks ? (
+              renderPacksView()
             ) : (() => {
               const todayDateStr = new Date().toISOString().split('T')[0];
               const isDailyCompleted = (user.stats as any)?.lastDailyChallengeCompleted === todayDateStr;
@@ -3407,22 +4496,27 @@ export default function ClientPage() {
 
                   <div style={styles.bottomNavMock}>
                     <span 
-                      style={{ cursor: 'pointer', ...((!viewingLeaderboard && !viewingTournaments) ? styles.activeNavTab : {}) }} 
-                      onClick={() => { playSFX('click'); setViewingLeaderboard(false); setViewingTournaments(false); }}
+                      style={{ cursor: 'pointer', ...((!viewingLeaderboard && !viewingTournaments && !viewingPacks) ? styles.activeNavTab : {}) }} 
+                      onClick={() => { playSFX('click'); setViewingLeaderboard(false); setViewingTournaments(false); setViewingPacks(false); }}
                     >
                       🎒
                     </span>
-                    <span>🛒</span>
+                    <span 
+                      style={{ cursor: 'pointer', ...(viewingPacks ? styles.activeNavTab : {}) }} 
+                      onClick={() => { playSFX('click'); setViewingLeaderboard(false); setViewingTournaments(false); setViewingPacks(true); fetchPacks(); }}
+                    >
+                      📦
+                    </span>
                     <span>⚔️</span>
                     <span 
                       style={{ cursor: 'pointer', ...((!viewingLeaderboard && viewingTournaments) ? styles.activeNavTab : {}) }} 
-                      onClick={() => { playSFX('click'); setViewingLeaderboard(false); setViewingTournaments(true); fetchTournaments(); }}
+                      onClick={() => { playSFX('click'); setViewingLeaderboard(false); setViewingTournaments(true); setViewingPacks(false); fetchTournaments(); }}
                     >
                       🏰
                     </span>
                     <span 
                       style={{ cursor: 'pointer', ...(viewingLeaderboard ? styles.activeNavTab : {}) }} 
-                      onClick={() => { playSFX('click'); setViewingLeaderboard(true); setViewingTournaments(false); loadLeaderboardData(); }}
+                      onClick={() => { playSFX('click'); setViewingLeaderboard(true); setViewingTournaments(false); setViewingPacks(false); loadLeaderboardData(); }}
                     >
                       🏆
                     </span>
@@ -3579,8 +4673,58 @@ export default function ClientPage() {
                           <option key={p.userId} value={p.userId}>{p.username}</option>
                         ))
                       }
-                      <option value={user?.id}>{isRtl ? 'أنت (حكم فقط)' : 'You (Judge Only)'}</option>
                     </select>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', gridColumn: 'span 2' }}>
+                    <label style={{ fontSize: '0.65rem', color: '#8a93c0', fontWeight: 700 }}>
+                      {isRtl ? 'حزم الأسئلة النشطة' : 'ACTIVE QUESTION PACKS'}
+                    </label>
+                    <div style={{
+                      maxHeight: '120px',
+                      overflowY: 'auto',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: '6px',
+                      padding: '8px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '6px',
+                      backgroundColor: '#0b0d1a'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem', color: '#ffffff' }}>
+                        <input
+                          type="checkbox"
+                          checked={!currentRoom.config?.questionPackIds || currentRoom.config.questionPackIds.length === 0}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              updateRoomConfig({ questionPackIds: [] });
+                            }
+                          }}
+                          style={{ cursor: 'pointer' }}
+                        />
+                        <span>{isRtl ? 'بنك الأسئلة الافتراضي' : 'Default Question Pool'}</span>
+                      </div>
+                      {packs.map((p) => {
+                        const activeIds = currentRoom.config?.questionPackIds || [];
+                        const isChecked = activeIds.includes(p.id);
+                        return (
+                          <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem', color: '#ffffff' }}>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => {
+                                const nextIds = e.target.checked
+                                  ? [...activeIds, p.id]
+                                  : activeIds.filter((id: string) => id !== p.id);
+                                updateRoomConfig({ questionPackIds: nextIds });
+                              }}
+                              style={{ cursor: 'pointer' }}
+                            />
+                            <span>📦 {p.title} ({p.category})</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '8px' }}>
@@ -3628,6 +4772,17 @@ export default function ClientPage() {
                         if (!jId) return isRtl ? 'تلقائي' : 'Automatic';
                         const jUser = participants.find(p => p.userId === jId);
                         return jUser ? jUser.username : (isRtl ? 'حكم' : 'Judge');
+                      })()}
+                    </span>
+                  </div>
+                  <div style={styles.paramItem}>
+                    <span style={styles.paramLabel}>{isRtl ? 'حزمة الأسئلة:' : 'Question Source:'}</span>
+                    <span style={styles.paramVal}>
+                      {(() => {
+                        const packId = currentRoom.config?.questionPackId;
+                        if (!packId) return isRtl ? 'الافتراضي' : 'Default Pool';
+                        const matched = packs.find(p => p.id === packId);
+                        return matched ? `📦 ${matched.title}` : (isRtl ? 'حزمة مخصصة' : 'Custom Pack');
                       })()}
                     </span>
                   </div>
