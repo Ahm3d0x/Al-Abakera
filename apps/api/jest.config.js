@@ -4,6 +4,9 @@ module.exports = {
   roots: ['<rootDir>/src'],
   testMatch: ['**/*.test.ts'],
   modulePathIgnorePatterns: ['<rootDir>/.vercel/', '<rootDir>/dist/'],
+  transform: {
+    '^.+\\.tsx?$': ['ts-jest', { isolatedModules: true }],
+  },
   verbose: true,
   forceExit: true,
   clearMocks: true,
