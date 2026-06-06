@@ -856,6 +856,11 @@ export default function ClientPage() {
     accuracy: number;
     correctCount: number;
     totalAnswered: number;
+    isMvp?: boolean;
+    rankChange?: number;
+    coinsEarned?: number;
+    tokensEarned?: number;
+    fastestAnswerMs?: number | null;
   }
 
   const [participants, setParticipants] = useState<PlayerParticipant[]>([]);
@@ -948,6 +953,7 @@ export default function ClientPage() {
         isCorrect: boolean;
         timeSpentMs: number;
         pointsEarned: number;
+        powerUpsUsed?: string[];
       }[];
     }[];
     isMultiplayer: boolean;
@@ -972,6 +978,7 @@ export default function ClientPage() {
     time_spent_ms: number;
     is_correct: boolean;
     points_earned: number;
+    power_ups_used?: string[];
   }
 
   // Enhanced summary screen states
@@ -979,6 +986,7 @@ export default function ClientPage() {
   const [matchReportDetails, setMatchReportDetails] = useState<MatchReportData | null>(null);
   const [loadingReportDetails, setLoadingReportDetails] = useState<boolean>(false);
   const [expandedRound, setExpandedRound] = useState<number | null>(null);
+  const [copiedToastVisible, setCopiedToastVisible] = useState<boolean>(false);
   
   // Game Play States
   const [gameMode, setGameMode] = useState<GameModeType>('PRACTICE');
@@ -2884,7 +2892,8 @@ export default function ClientPage() {
               username: player?.username || 'Player',
               isCorrect: ans.is_correct,
               timeSpentMs: ans.time_spent_ms,
-              pointsEarned: ans.points_earned
+              pointsEarned: ans.points_earned,
+              powerUpsUsed: ans.power_ups_used || []
             };
           })
         };
@@ -2914,6 +2923,40 @@ export default function ClientPage() {
       }, 0);
     }
   }, [screen, currentRoom]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Animate rank progression bar
+  useEffect(() => {
+    if (screen === 'summary' && !loadingReportDetails && matchReportDetails) {
+      const getTierInfoLocal = (rp: number) => {
+        const tiers = [
+          { name: 'Bronze', min: 0, max: 999 },
+          { name: 'Silver', min: 1000, max: 1999 },
+          { name: 'Gold', min: 2000, max: 2999 },
+          { name: 'Platinum', min: 3000, max: 3999 },
+          { name: 'Diamond', min: 4000, max: 4999 },
+          { name: 'Master', min: 5000, max: 5999 },
+          { name: 'Grand Master', min: 6000, max: 6999 },
+          { name: 'Legend', min: 7000, max: 7999 },
+          { name: 'Mythic', min: 8000, max: 8999 },
+          { name: 'Titan', min: 9000, max: 999999 }
+        ];
+        const tier = tiers.find(t => rp >= t.min && rp <= t.max) || tiers[0];
+        const range = tier.name === 'Titan' ? 1000 : (tier.max - tier.min + 1);
+        return Math.min(100, Math.max(0, ((rp - tier.min) / range) * 100));
+      };
+
+      const startPercent = getTierInfoLocal(matchStartRP);
+      const endPercent = getTierInfoLocal(user?.rankPoints || 0);
+      
+      setProgressWidth(startPercent);
+      
+      const timer = setTimeout(() => {
+        setProgressWidth(endPercent);
+      }, 600);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [screen, loadingReportDetails, matchReportDetails, matchStartRP, user?.rankPoints]);
 
   const enterGameScreen = () => {
     setScreen('game');
@@ -7472,8 +7515,219 @@ export default function ClientPage() {
                 return Math.round((candCount / totalVotes) * 100);
               };
 
+              const getTierInfo = (rp: number) => {
+                const tiers = [
+                  { name: 'Bronze', min: 0, max: 999 },
+                  { name: 'Silver', min: 1000, max: 1999 },
+                  { name: 'Gold', min: 2000, max: 2999 },
+                  { name: 'Platinum', min: 3000, max: 3999 },
+                  { name: 'Diamond', min: 4000, max: 4999 },
+                  { name: 'Master', min: 5000, max: 5999 },
+                  { name: 'Grand Master', min: 6000, max: 6999 },
+                  { name: 'Legend', min: 7000, max: 7999 },
+                  { name: 'Mythic', min: 8000, max: 8999 },
+                  { name: 'Titan', min: 9000, max: 999999 }
+                ];
+                const tier = tiers.find(t => rp >= t.min && rp <= t.max) || tiers[0];
+                const range = tier.name === 'Titan' ? 1000 : (tier.max - tier.min + 1);
+                const progress = Math.min(100, Math.max(0, ((rp - tier.min) / range) * 100));
+                return { ...tier, progress };
+              };
+
+              const myUserId = user?.id || 'solo_player';
+              
+              // Get all my answers in order of round numbers
+              const getPlayerAnswers = (pId: string) => {
+                return rounds
+                  .map(r => {
+                    const ans = r.answers.find(a => a.userId === pId);
+                    return ans ? { ...ans, roundNumber: r.roundNumber } : null;
+                  })
+                  .filter((a): a is NonNullable<typeof a> => a !== null);
+              };
+
+              const myAnswers = getPlayerAnswers(myUserId);
+
+              // 1. Average Speed
+              const avgSpeedVal = myAnswers.length > 0
+                ? (myAnswers.reduce((sum, a) => sum + a.timeSpentMs, 0) / myAnswers.length) / 1000
+                : 0;
+
+              // 2. Fastest Correct Answer
+              const correctSpeeds = myAnswers.filter(a => a.isCorrect).map(a => a.timeSpentMs);
+              const fastestSpeedVal = correctSpeeds.length > 0
+                ? Math.min(...correctSpeeds) / 1000
+                : (myParticipant?.fastestAnswerMs ? myParticipant.fastestAnswerMs / 1000 : 0);
+
+              // 3. Power-ups used count
+              const powerupCountVal = myAnswers.reduce((sum, a) => sum + (a.powerUpsUsed?.length || 0), 0);
+
+              // 4. Coins, Tokens and XP Gained
+              const coinsEarnedVal = myParticipant 
+                ? (myParticipant.coinsEarned ?? 0) 
+                : (gameMode === 'DAILY_CHALLENGE' ? Math.floor(score / 10) + 50 : Math.floor(score / 10));
+              const tokensEarnedVal = myParticipant ? (myParticipant.tokensEarned ?? 0) : 0;
+              const xpEarnedVal = 250;
+
+              // 5. Highlights (Top Moments)
+              const generateHighlights = () => {
+                const list: { icon: string; title: { en: string; ar: string }; desc: { en: string; ar: string } }[] = [];
+                if (myAnswers.length === 0) return list;
+
+                // Accuracy checks
+                const myCorrectCount = myAnswers.filter(a => a.isCorrect).length;
+                const myAccuracy = Math.round((myCorrectCount / myAnswers.length) * 100);
+                if (myAccuracy === 100 && myAnswers.length >= 3) {
+                  list.push({
+                    icon: '🎯',
+                    title: { en: 'Perfectionist', ar: 'الباحث عن المثالية' },
+                    desc: { en: 'Answered all questions correctly!', ar: 'أجاب على جميع الأسئلة بشكل صحيح!' }
+                  });
+                }
+
+                // Speed checks
+                if (correctSpeeds.length > 0) {
+                  const minSpeed = Math.min(...correctSpeeds) / 1000;
+                  if (minSpeed < 3) {
+                    list.push({
+                      icon: '⚡',
+                      title: { en: 'Speed Demon', ar: 'شيطان السرعة' },
+                      desc: { 
+                        en: `Answered correctly in only ${minSpeed.toFixed(1)}s!`, 
+                        ar: `أجاب إجابة صحيحة في غضون ${minSpeed.toFixed(1)} ثانية فقط!` 
+                      }
+                    });
+                  }
+                }
+
+                // Streak checks
+                let maxStreak = 0;
+                let currentStreak = 0;
+                myAnswers.forEach(a => {
+                  if (a.isCorrect) {
+                    currentStreak++;
+                    if (currentStreak > maxStreak) maxStreak = currentStreak;
+                  } else {
+                    currentStreak = 0;
+                  }
+                });
+                if (maxStreak >= 3) {
+                  list.push({
+                    icon: '🔥',
+                    title: { en: 'Streak Master', ar: 'سيد المتتاليات' },
+                    desc: { 
+                      en: `Got ${maxStreak} correct answers in a row!`, 
+                      ar: `حصل على ${maxStreak} إجابات صحيحة متتالية!` 
+                    }
+                  });
+                }
+
+                // Power-ups checks
+                if (powerupCountVal >= 2) {
+                  list.push({
+                    icon: '🛡️',
+                    title: { en: 'Tactician', ar: 'المخطط البارع' },
+                    desc: { 
+                      en: `Used ${powerupCountVal} power-ups strategically!`, 
+                      ar: `استخدم ${powerupCountVal} من المعززات بشكل استراتيجي!` 
+                    }
+                  });
+                }
+
+                // Clutch checks
+                const lastRoundAnswer = myAnswers[myAnswers.length - 1];
+                if (lastRoundAnswer && lastRoundAnswer.isCorrect && myAnswers.length >= 3) {
+                  list.push({
+                    icon: '👑',
+                    title: { en: 'Clutch Player', ar: 'اللاعب الحاسم' },
+                    desc: { 
+                      en: 'Aced the high-pressure final round!', 
+                      ar: 'تألق وأجاب بشكل صحيح في الجولة الأخيرة الحاسمة!' 
+                    }
+                  });
+                }
+
+                // Fallback
+                if (list.length === 0) {
+                  list.push({
+                    icon: '💪',
+                    title: { en: 'Gladiator', ar: 'المقاتل' },
+                    desc: { 
+                      en: 'Fought hard and finished the match!', 
+                      ar: 'قاتل بجدية وأكمل التحدي للنهاية!' 
+                    }
+                  });
+                }
+                return list;
+              };
+
+              const matchHighlights = generateHighlights();
+
+              // 6. Newly Unlocked Badges
+              const newlyUnlockedBadges = (user?.badges || []).filter(b => !matchStartBadges.includes(b));
+              
+              // 7. MVP determination
+              const mvpPlayer = players.find(p => p.isMvp) || (players.length > 0 ? players[0] : null);
+
+              // 8. RP Difference
+              const rpDiff = (user?.rankPoints || 0) - matchStartRP;
+
+              // 9. MVP Fastest Time Helper
+              const getPlayerFastestTime = (pId: string) => {
+                const pAns = getPlayerAnswers(pId);
+                const correctPAns = pAns.filter(a => a.isCorrect);
+                if (correctPAns.length > 0) {
+                  return `${(Math.min(...correctPAns.map(a => a.timeSpentMs)) / 1000).toFixed(2)}s`;
+                }
+                const matchedPlayer = players.find(p => p.userId === pId);
+                if (matchedPlayer?.fastestAnswerMs) {
+                  return `${(matchedPlayer.fastestAnswerMs / 1000).toFixed(2)}s`;
+                }
+                return '-';
+              };
+
+              const getShareText = () => {
+                const matchType = matchReportDetails.isMultiplayer 
+                  ? (isRtl ? 'مواجهة جماعية في سباق العقول' : 'multiplayer match in MindRace') 
+                  : (isRtl ? 'تحدي فردي في سباق العقول' : 'solo run in MindRace');
+                
+                const myAccuracy = myParticipant?.accuracy || (myAnswers.length > 0 ? Math.round((myAnswers.filter(a => a.isCorrect).length / myAnswers.length) * 100) : 0);
+                
+                if (isRtl) {
+                  return `لقد أكملت للتو ${matchType}! 
+النتيجة: ${score} نقطة 🎯
+الدقة: ${myAccuracy}% 📊
+الرتبة الحالية: ${user?.rank || 'Bronze'} (${user?.rankPoints || 0} RP) 🏆
+العب سباق العقول واختبر معلوماتك الآن! 🧠⚡`;
+                } else {
+                  return `I just finished a ${matchType}! 
+Score: ${score} pts 🎯
+Accuracy: ${myAccuracy}% 📊
+Current Rank: ${user?.rank || 'Bronze'} (${user?.rankPoints || 0} RP) 🏆
+Play MindRace and test your knowledge now! 🧠⚡`;
+                }
+              };
+
+              const shareToTwitter = () => {
+                const text = encodeURIComponent(getShareText());
+                window.open(`https://twitter.com/intent/tweet?text=${text}`, '_blank');
+              };
+
+              const shareToWhatsApp = () => {
+                const text = encodeURIComponent(getShareText());
+                window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
+              };
+
+              const copyToClipboard = () => {
+                const text = getShareText();
+                navigator.clipboard.writeText(text).then(() => {
+                  setCopiedToastVisible(true);
+                  setTimeout(() => setCopiedToastVisible(false), 2000);
+                });
+              };
+
               return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', height: '100%', minHeight: 0 }}>
                   
                   {/* Voting Card Panel */}
                   {votingActive && (
@@ -7733,477 +7987,875 @@ export default function ClientPage() {
 
                   {!votingActive && (
                     <>
-                      {/* Victory/Defeat Premium Banner */}
+                      {/* Scrollable Content Area */}
                       <div 
-                        className={isVictory ? "victory-banner" : "defeat-banner"}
-                        style={{
-                          borderRadius: '16px',
-                          padding: '24px',
-                          textAlign: 'center',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          gap: '12px',
-                          boxShadow: isVictory ? '0 0 30px rgba(0, 230, 118, 0.15)' : '0 0 30px rgba(255, 23, 68, 0.15)',
-                          transition: 'var(--transition-smooth)'
-                        }}
+                        style={{ 
+                          display: 'flex', 
+                          flexDirection: 'column', 
+                          gap: '20px', 
+                          overflowY: 'auto', 
+                          flex: 1, 
+                          paddingRight: '4px',
+                          paddingBottom: '16px' 
+                        }} 
+                        className="custom-scrollbar"
                       >
-                        <span 
-                          className="animate-float" 
-                          style={{ 
-                            fontSize: '4.5rem',
-                            filter: isVictory ? 'drop-shadow(0 0 15px rgba(0,230,118,0.5))' : 'drop-shadow(0 0 15px rgba(255,23,68,0.5))'
-                          }}
-                        >
-                          {isVictory ? '👑' : '💀'}
-                        </span>
-                        <h1 
-                          style={{ 
-                            fontSize: '2.5rem', 
-                            fontWeight: 900, 
-                            letterSpacing: '1px',
-                            textShadow: isVictory ? '0 0 15px rgba(0, 230, 118, 0.6)' : '0 0 15px rgba(255, 23, 68, 0.6)',
-                            color: '#ffffff'
-                          }}
-                        >
-                          {isVictory ? t.victoryTitle : t.defeatTitle}
-                        </h1>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', maxWidth: '320px', lineHeight: 1.5 }}>
-                          {isVictory 
-                            ? (currentRoom ? (isRtl ? 'لقد سيطرت على ساحة المعركة المعرفية وتفوقت على الجميع!' : 'You dominated the cognitive arena and outsmarted everyone!') : (isRtl ? 'أداء رائع! لقد أكملت التحدي بدقة عالية!' : 'Fantastic job! You completed the challenge successfully!'))
-                            : (currentRoom ? (isRtl ? 'الهزيمة ليست النهاية، بل بداية طريق التميز والتعلم!' : 'Defeat is not the end, but the beginning of mastery!') : (isRtl ? 'استمر في التحدي! الممارسة تصنع الفارق دائماً!' : 'Keep practicing! Repetition is the key to mastery!'))
-                          }
-                        </p>
-                      </div>
-
-                      {/* Awards Winners Banner */}
-                      {votingWinners && (
-                        <div style={{
-                          background: 'linear-gradient(135deg, rgba(11, 13, 26, 0.9) 0%, rgba(17, 19, 31, 0.95) 100%)',
-                          border: '2px solid #ffd700',
-                          borderRadius: '16px',
-                          padding: '20px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '14px',
-                          boxShadow: '0 0 25px rgba(255, 215, 0, 0.15)',
-                          boxSizing: 'border-box',
-                          textAlign: 'center',
-                          position: 'relative',
-                          overflow: 'hidden',
-                          marginTop: '10px'
-                        }}>
-                          {/* Sparkles / Gold Ambient Glow */}
-                          <div style={{
-                            position: 'absolute',
-                            top: '-50%',
-                            left: '-50%',
-                            width: '200%',
-                            height: '200%',
-                            background: 'radial-gradient(circle, rgba(255, 215, 0, 0.05) 0%, transparent 70%)',
-                            pointerEvents: 'none'
-                          }} />
-
-                          <h2 style={{
-                            fontSize: '1.25rem',
-                            fontWeight: 800,
-                            color: '#ffd700',
-                            margin: 0,
-                            fontFamily: 'var(--font-display)',
-                            textTransform: 'uppercase',
-                            letterSpacing: '1px',
-                            textShadow: '0 0 10px rgba(255, 215, 0, 0.3)',
-                            zIndex: 2
-                          }}>
-                            {t.awardsWinnersTitle}
-                          </h2>
-
-                          <div style={{
-                            display: 'grid',
-                            gridTemplateColumns: votingWinners.bestTeam ? '1fr 1fr 1fr' : '1fr',
+                        {/* Victory/Defeat Premium Banner */}
+                        <div 
+                          className={isVictory ? "victory-banner" : "defeat-banner"}
+                          style={{
+                            borderRadius: '16px',
+                            padding: '24px',
+                            textAlign: 'center',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
                             gap: '12px',
-                            zIndex: 2,
-                            alignItems: 'stretch'
-                          }}>
-                            {/* Award: MVP */}
-                            <div style={{
-                              background: 'rgba(255, 215, 0, 0.03)',
-                              border: '1px solid rgba(255, 215, 0, 0.15)',
-                              borderRadius: '10px',
-                              padding: '12px 8px',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              alignItems: 'center',
-                              gap: '6px',
-                              justifyContent: 'center'
-                            }}>
-                              <span style={{ fontSize: '0.75rem', color: '#ffd700', fontWeight: 'bold', textTransform: 'uppercase' }}>
-                                {t.mvpWinner}
-                              </span>
-                              <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#ffffff', fontFamily: 'var(--font-display)' }}>
-                                {votingWinners.bestPlayer || (isRtl ? 'لا يوجد' : 'No votes')}
-                              </span>
-                            </div>
-
-                            {/* Award: Best Team (if team battle) */}
-                            {votingWinners.bestTeam && (
-                              <div style={{
-                                background: 'rgba(255, 59, 92, 0.03)',
-                                border: '1px solid rgba(255, 59, 92, 0.15)',
-                                borderRadius: '10px',
-                                padding: '12px 8px',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'center',
-                                gap: '6px',
-                                justifyContent: 'center'
-                              }}>
-                                <span style={{ fontSize: '0.75rem', color: '#ff4d6d', fontWeight: 'bold', textTransform: 'uppercase' }}>
-                                  {t.bestTeamWinner}
-                                </span>
-                                <span style={{
-                                  fontSize: '1.1rem',
-                                  fontWeight: 900,
-                                  color: votingWinners.bestTeam.includes('A') ? '#00f2fe' : '#ff3b5c',
-                                  fontFamily: 'var(--font-display)'
-                                }}>
-                                  {votingWinners.bestTeam}
-                                </span>
-                              </div>
-                            )}
-
-                            {/* Award: Best Answer (if team battle) */}
-                            {votingWinners.bestAnswer && (
-                              <div style={{
-                                background: 'rgba(0, 245, 255, 0.03)',
-                                border: '1px solid rgba(0, 245, 255, 0.15)',
-                                borderRadius: '10px',
-                                padding: '12px 8px',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'center',
-                                gap: '6px',
-                                justifyContent: 'center'
-                              }}>
-                                <span style={{ fontSize: '0.75rem', color: '#00f5ff', fontWeight: 'bold', textTransform: 'uppercase' }}>
-                                  {t.bestAnswerWinner}
-                                </span>
-                                <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#ffffff', fontFamily: 'var(--font-display)' }}>
-                                  {votingWinners.bestAnswer || (isRtl ? 'لا يوجد' : 'No votes')}
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                  {/* Personal Summary Stats */}
-                  <div style={styles.summaryStatsGrid}>
-                    <div style={styles.statCard}>
-                      <span style={styles.statHeading}>{t.score}</span>
-                      <span style={styles.statNum} className="text-glow">{score}</span>
-                    </div>
-
-                    <div style={styles.statCard}>
-                      <span style={styles.statHeading}>{t.accuracy}</span>
-                      <span style={styles.statNum} className="text-glow-accent">
-                        {gameQuestions.length > 0 ? Math.round((correctAnswersCount / gameQuestions.length) * 100) : 0}%
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Team Battle Score Comparison Grid */}
-                  {isTeamMode && (
-                    <div style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 1fr',
-                      gap: '16px',
-                      padding: '16px',
-                      backgroundColor: 'rgba(17, 19, 31, 0.8)',
-                      border: '1px solid rgba(255, 255, 255, 0.05)',
-                      borderRadius: '12px',
-                      textAlign: 'center',
-                      marginTop: '-8px'
-                    }}>
-                      {/* Team A */}
-                      <div style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '6px',
-                        padding: '12px',
-                        border: `2px solid ${teamAScore >= teamBScore ? '#00f2fe' : 'transparent'}`,
-                        backgroundColor: 'rgba(0, 242, 254, 0.02)',
-                        borderRadius: '8px',
-                        position: 'relative'
-                      }}>
-                        {teamAScore >= teamBScore && (
-                          <span style={{ position: 'absolute', top: '-14px', left: '50%', transform: 'translateX(-50%)', fontSize: '1.2rem' }}>👑</span>
-                        )}
-                        <span style={{ fontSize: '0.8rem', color: '#00f2fe', fontWeight: 800 }}>
-                          {isRtl ? 'الفريق أ (الأزرق)' : 'TEAM A (Blue)'}
-                        </span>
-                        <span style={{ fontSize: '1.8rem', fontWeight: 900, color: '#ffffff' }}>
-                          {teamAScore}
-                        </span>
-                        <span style={{ fontSize: '0.7rem', color: '#8a93c0' }}>
-                          {`${players.filter(p => p.teamId === 'team_a').length} ${isRtl ? 'لاعبين' : 'Players'}`}
-                        </span>
-                      </div>
-
-                      {/* Team B */}
-                      <div style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '6px',
-                        padding: '12px',
-                        border: `2px solid ${teamBScore >= teamAScore ? '#ff3b5c' : 'transparent'}`,
-                        backgroundColor: 'rgba(255, 59, 92, 0.02)',
-                        borderRadius: '8px',
-                        position: 'relative'
-                      }}>
-                        {teamBScore >= teamAScore && (
-                          <span style={{ position: 'absolute', top: '-14px', left: '50%', transform: 'translateX(-50%)', fontSize: '1.2rem' }}>👑</span>
-                        )}
-                        <span style={{ fontSize: '0.8rem', color: '#ff3b5c', fontWeight: 800 }}>
-                          {isRtl ? 'الفريق ب (الأحمر)' : 'TEAM B (Red)'}
-                        </span>
-                        <span style={{ fontSize: '1.8rem', fontWeight: 900, color: '#ffffff' }}>
-                          {teamBScore}
-                        </span>
-                        <span style={{ fontSize: '0.7rem', color: '#8a93c0' }}>
-                          {`${players.filter(p => p.teamId === 'team_b').length} ${isRtl ? 'لاعبين' : 'Players'}`}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Rewards Panel */}
-                  <div style={styles.rewardsPanelCard}>
-                    <div style={styles.rewardDetailRow}>
-                      <span style={{ color: 'var(--text-secondary)' }}>{t.coinsEarned}</span>
-                      <span style={{ color: '#ffb300', fontWeight: 800 }}>+ {Math.floor(score / 10)} 🪙</span>
-                    </div>
-                    <div style={styles.rewardDetailRow}>
-                      <span style={{ color: 'var(--text-secondary)' }}>{t.xpGained}</span>
-                      <span style={{ color: '#00e676', fontWeight: 800 }}>+ 250 XP</span>
-                    </div>
-                  </div>
-
-                  {/* Standings Table / Scoreboard */}
-                  <div style={{ ...styles.rewardsPanelCard, gap: '16px' }}>
-                    <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--primary)', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '10px' }}>
-                      🏆 {t.standingsTitle}
-                    </h2>
-                    <div style={{ overflowX: 'auto', width: '100%' }}>
-                      <table className="glass-table">
-                        <thead>
-                          <tr>
-                            <th>{t.rankHeader}</th>
-                            <th>{t.playerHeader}</th>
-                            <th>{t.scoreHeader}</th>
-                            <th>{t.accuracyHeader}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {players.map((p, idx) => {
-                            const isSelf = p.userId === user?.id;
-                            const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
-                            return (
-                              <tr key={p.userId} className={isSelf ? "glass-table-row self" : "glass-table-row"}>
-                                <td style={{ fontWeight: 800, fontSize: idx < 3 ? '1.2rem' : '0.9rem' }}>{medal}</td>
-                                <td>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: isRtl ? 'flex-end' : 'flex-start' }}>
-                                    <RankBadge rank={p.rank} size={32} animate={false} />
-                                    <span style={{ fontWeight: isSelf ? 800 : 500 }}>
-                                      {p.username}
-                                    </span>
-                                    {isSelf && (
-                                      <span style={{ fontSize: '0.7rem', padding: '2px 6px', background: 'rgba(0, 242, 254, 0.2)', border: '1px solid var(--primary)', borderRadius: '4px', color: 'var(--primary)', fontWeight: 800 }}>
-                                        {isRtl ? 'أنت' : 'YOU'}
-                                      </span>
-                                    )}
-                                  </div>
-                                </td>
-                                <td style={{ fontWeight: 700, color: isSelf ? 'var(--primary)' : '#ffffff' }}>{p.score}</td>
-                                <td style={{ color: 'var(--text-secondary)' }}>{p.accuracy}%</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                      </div>
-                    </div>
-
-                  {/* Final Audience Standings (If any spectator scores exist) */}
-                  {audienceLeaderboard && audienceLeaderboard.length > 0 && (
-                    <div style={{ ...styles.rewardsPanelCard, gap: '16px' }}>
-                      <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#ffd700', borderBottom: '1px solid rgba(255,215,0,0.15)', paddingBottom: '10px' }}>
-                        🏆 {isRtl ? 'النتائج النهائية للجمهور' : 'Final Audience Standings'}
-                      </h2>
-                      <div style={{ overflowX: 'auto', width: '100%' }}>
-                        <table className="glass-table" style={{ borderColor: 'rgba(255, 215, 0, 0.15)' }}>
-                          <thead>
-                            <tr>
-                              <th>{t.rankHeader}</th>
-                              <th>{isRtl ? 'المتفرج' : 'Spectator'}</th>
-                              <th>{t.scoreHeader}</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {audienceLeaderboard.map((entry, idx) => {
-                              const isLocalGuest = entry.username === audienceNickname || (user && entry.username === user.username);
-                              const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
-                              return (
-                                <tr key={idx} className={isLocalGuest ? "glass-table-row self" : "glass-table-row"} style={{
-                                  backgroundColor: isLocalGuest ? 'rgba(255, 215, 0, 0.05)' : 'transparent'
-                                }}>
-                                  <td style={{ fontWeight: 800, fontSize: idx < 3 ? '1.2rem' : '0.9rem', color: isLocalGuest ? '#ffd700' : '#ffffff' }}>{medal}</td>
-                                  <td>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: isRtl ? 'flex-end' : 'flex-start' }}>
-                                      <span style={{ fontWeight: isLocalGuest ? 800 : 500, color: isLocalGuest ? '#ffd700' : '#ffffff' }}>
-                                        {entry.username}
-                                      </span>
-                                      {isLocalGuest && (
-                                        <span style={{ fontSize: '0.7rem', padding: '2px 6px', background: 'rgba(255, 215, 0, 0.2)', border: '1px solid #ffd700', borderRadius: '4px', color: '#ffd700', fontWeight: 800 }}>
-                                          {isRtl ? 'أنت' : 'YOU'}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </td>
-                                  <td style={{ fontWeight: 700, color: isLocalGuest ? '#ffd700' : '#00f5ff' }}>{entry.score}</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Round-by-Round Breakdown Matrix */}
-                  <div style={{ ...styles.rewardsPanelCard, gap: '16px' }}>
-                    <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--primary)', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '10px' }}>
-                      📊 {t.detailedReportTitle}
-                    </h2>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      {rounds.map((r) => {
-                        const isExpanded = expandedRound === r.roundNumber;
-                        return (
-                          <div 
-                            key={r.roundNumber} 
+                            boxShadow: isVictory ? '0 0 30px rgba(0, 230, 118, 0.15)' : '0 0 30px rgba(255, 23, 68, 0.15)',
+                            transition: 'var(--transition-smooth)',
+                            flexShrink: 0
+                          }}
+                        >
+                          <span 
+                            className="animate-float" 
                             style={{ 
-                              background: 'rgba(255, 255, 255, 0.01)', 
-                              border: '1px solid rgba(255, 255, 255, 0.04)', 
-                              borderRadius: '8px',
-                              overflow: 'hidden'
+                              fontSize: '4.5rem',
+                              filter: isVictory ? 'drop-shadow(0 0 15px rgba(0,230,118,0.5))' : 'drop-shadow(0 0 15px rgba(255,23,68,0.5))'
                             }}
                           >
-                            {/* Accordion Trigger Header */}
-                            <div 
-                              className="accordion-trigger"
-                              style={{ 
-                                padding: '14px 16px', 
-                                display: 'flex', 
-                                justifyContent: 'space-between', 
-                                alignItems: 'center',
-                                gap: '12px',
-                                background: isExpanded ? 'rgba(255, 255, 255, 0.03)' : 'transparent'
-                              }}
-                              onClick={() => setExpandedRound(isExpanded ? null : r.roundNumber)}
-                            >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <span style={{ fontWeight: 800, color: 'var(--primary)' }}>Q{r.roundNumber}</span>
-                                <span style={{ color: '#ffffff', fontSize: '0.88rem', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: '180px' }}>
-                                  {getLocalizedText(r.questionBody)}
-                                </span>
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                {/* Mini indicators for players' accuracy */}
-                                <div style={{ display: 'flex', gap: '4px' }}>
-                                  {players.map((p) => {
-                                    const pAns = r.answers.find((a) => a.userId === p.userId);
-                                    return (
-                                      <div 
-                                        key={p.userId} 
-                                        title={`${p.username}: ${pAns ? (pAns.isCorrect ? 'Correct' : 'Incorrect') : 'No Answer'}`}
-                                        style={{ 
-                                          width: '8px', 
-                                          height: '8px', 
-                                          borderRadius: '50%', 
-                                          background: pAns ? (pAns.isCorrect ? '#00e676' : '#ff1744') : 'rgba(255,255,255,0.1)' 
-                                        }} 
-                                      />
-                                    );
-                                  })}
+                            {isVictory ? '👑' : '💀'}
+                          </span>
+                          <h1 
+                            style={{ 
+                              fontSize: '2.5rem', 
+                              fontWeight: 900, 
+                              letterSpacing: '1px',
+                              textShadow: isVictory ? '0 0 15px rgba(0, 230, 118, 0.6)' : '0 0 15px rgba(255, 23, 68, 0.6)',
+                              color: '#ffffff',
+                              margin: 0
+                            }}
+                          >
+                            {isVictory ? t.victoryTitle : t.defeatTitle}
+                          </h1>
+                          <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', maxWidth: '320px', lineHeight: 1.5, margin: 0 }}>
+                            {isVictory 
+                              ? (currentRoom ? (isRtl ? 'لقد سيطرت على ساحة المعركة المعرفية وتفوقت على الجميع!' : 'You dominated the cognitive arena and outsmarted everyone!') : (isRtl ? 'أداء رائع! لقد أكملت التحدي بدقة عالية!' : 'Fantastic job! You completed the challenge successfully!'))
+                              : (currentRoom ? (isRtl ? 'الهزيمة ليست النهاية، بل بداية طريق التميز والتعلم!' : 'Defeat is not the end, but the beginning of mastery!') : (isRtl ? 'استمر في التحدي! الممارسة تصنع الفارق دائماً!' : 'Keep practicing! Repetition is the key to mastery!'))
+                            }
+                          </p>
+                        </div>
+
+                        {/* MVP Spotlight Card */}
+                        {mvpPlayer && (
+                          <div style={{
+                            background: 'linear-gradient(135deg, rgba(255, 215, 0, 0.08) 0%, rgba(11, 13, 26, 0.95) 100%)',
+                            border: '2px solid rgba(255, 215, 0, 0.6)',
+                            borderRadius: '16px',
+                            padding: '20px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: '12px',
+                            boxShadow: '0 0 25px rgba(255, 215, 0, 0.25)',
+                            boxSizing: 'border-box',
+                            position: 'relative',
+                            overflow: 'hidden',
+                            marginTop: '4px',
+                            flexShrink: 0
+                          }} className="animate-float">
+                            {/* Ambient Glowing Spotlights */}
+                            <div style={{
+                              position: 'absolute',
+                              top: '-20%',
+                              left: '-20%',
+                              width: '140%',
+                              height: '140%',
+                              background: 'radial-gradient(circle, rgba(255, 215, 0, 0.06) 0%, transparent 60%)',
+                              pointerEvents: 'none'
+                            }} />
+
+                            <span style={{ fontSize: '2.5rem', filter: 'drop-shadow(0 0 10px rgba(255,215,0,0.5))', zIndex: 2 }}>👑</span>
+                            
+                            <h2 style={{
+                              fontSize: '1.3rem',
+                              fontWeight: 900,
+                              color: '#ffd700',
+                              margin: 0,
+                              fontFamily: 'var(--font-display)',
+                              letterSpacing: '1px',
+                              textShadow: '0 0 12px rgba(255, 215, 0, 0.4)',
+                              zIndex: 2
+                            }}>
+                              {isRtl ? 'بطل المواجهة (MVP)' : 'MATCH MVP'}
+                            </h2>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', zIndex: 2 }}>
+                              {mvpPlayer.avatarUrl ? (
+                                <img 
+                                  src={mvpPlayer.avatarUrl} 
+                                  alt={mvpPlayer.username} 
+                                  style={{ width: '48px', height: '48px', borderRadius: '50%', border: '2px solid #ffd700', objectFit: 'cover' }} 
+                                />
+                              ) : (
+                                <div style={{ 
+                                  width: '48px', 
+                                  height: '48px', 
+                                  borderRadius: '50%', 
+                                  border: '2px solid #ffd700', 
+                                  backgroundColor: 'rgba(255,215,0,0.1)', 
+                                  display: 'flex', 
+                                  alignItems: 'center', 
+                                  justifyContent: 'center',
+                                  fontSize: '1.5rem',
+                                  color: '#ffd700'
+                                }}>
+                                  👤
                                 </div>
-                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                  {isExpanded ? '▲' : '▼'}
+                              )}
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
+                                <span style={{ fontSize: '1.2rem', fontWeight: 800, color: '#ffffff' }}>
+                                  {mvpPlayer.username}
                                 </span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <RankBadge rank={mvpPlayer.rank} size={20} animate={false} />
+                                  <span style={{ fontSize: '0.75rem', color: '#ffd700', fontWeight: 600 }}>
+                                    {mvpPlayer.rank}
+                                  </span>
+                                </div>
                               </div>
                             </div>
 
-                            {/* Accordion Content */}
-                            {isExpanded && (
-                              <div style={{ padding: '16px', borderTop: '1px solid rgba(255, 255, 255, 0.04)', display: 'flex', flexDirection: 'column', gap: '12px', background: 'rgba(0, 0, 0, 0.15)' }}>
-                                <div style={{ fontSize: '0.9rem', color: '#ffffff', lineHeight: 1.5, background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                                  <span style={{ fontWeight: 700, display: 'block', color: 'var(--primary)', marginBottom: '4px' }}>
-                                    {isRtl ? 'السؤال الكامل:' : 'Full Question:'}
-                                  </span>
-                                  {getLocalizedText(r.questionBody)}
-                                </div>
+                            {/* MVP Stats Block */}
+                            <div style={{
+                              display: 'grid',
+                              gridTemplateColumns: '1fr 1fr 1fr',
+                              gap: '8px',
+                              width: '100%',
+                              backgroundColor: 'rgba(0, 0, 0, 0.25)',
+                              borderRadius: '8px',
+                              padding: '10px',
+                              zIndex: 2,
+                              border: '1px solid rgba(255, 215, 0, 0.15)'
+                            }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>{t.scoreHeader}</span>
+                                <span style={{ fontSize: '1.1rem', fontWeight: 800, color: '#ffd700' }}>{mvpPlayer.score}</span>
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>{t.accuracyHeader}</span>
+                                <span style={{ fontSize: '1.1rem', fontWeight: 800, color: '#ffffff' }}>{mvpPlayer.accuracy}%</span>
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>{isRtl ? 'أسرع زمن' : 'Fastest Time'}</span>
+                                <span style={{ fontSize: '1.1rem', fontWeight: 800, color: '#00f2fe' }}>
+                                  {getPlayerFastestTime(mvpPlayer.userId)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
-                                {/* Player results details */}
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', margin: '4px 0' }}>
-                                  <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
-                                    {isRtl ? 'إجابات اللاعبين:' : 'Player Performance:'}
+                        {/* Awards Winners Banner */}
+                        {votingWinners && (
+                          <div style={{
+                            background: 'linear-gradient(135deg, rgba(11, 13, 26, 0.9) 0%, rgba(17, 19, 31, 0.95) 100%)',
+                            border: '2px solid #ffd700',
+                            borderRadius: '16px',
+                            padding: '20px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '14px',
+                            boxShadow: '0 0 25px rgba(255, 215, 0, 0.15)',
+                            boxSizing: 'border-box',
+                            textAlign: 'center',
+                            position: 'relative',
+                            overflow: 'hidden',
+                            flexShrink: 0
+                          }}>
+                            <div style={{
+                              position: 'absolute',
+                              top: '-50%',
+                              left: '-50%',
+                              width: '200%',
+                              height: '200%',
+                              background: 'radial-gradient(circle, rgba(255, 215, 0, 0.05) 0%, transparent 70%)',
+                              pointerEvents: 'none'
+                            }} />
+
+                            <h2 style={{
+                              fontSize: '1.25rem',
+                              fontWeight: 800,
+                              color: '#ffd700',
+                              margin: 0,
+                              fontFamily: 'var(--font-display)',
+                              textTransform: 'uppercase',
+                              letterSpacing: '1px',
+                              textShadow: '0 0 10px rgba(255, 215, 0, 0.3)',
+                              zIndex: 2
+                            }}>
+                              {t.awardsWinnersTitle}
+                            </h2>
+
+                            <div style={{
+                              display: 'grid',
+                              gridTemplateColumns: votingWinners.bestTeam ? '1fr 1fr 1fr' : '1fr',
+                              gap: '12px',
+                              zIndex: 2,
+                              alignItems: 'stretch'
+                            }}>
+                              <div style={{
+                                background: 'rgba(255, 215, 0, 0.03)',
+                                border: '1px solid rgba(255, 215, 0, 0.15)',
+                                borderRadius: '10px',
+                                padding: '12px 8px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                gap: '6px',
+                                justifyContent: 'center'
+                              }}>
+                                <span style={{ fontSize: '0.75rem', color: '#ffd700', fontWeight: 'bold', textTransform: 'uppercase' }}>
+                                  {t.mvpWinner}
+                                </span>
+                                <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#ffffff', fontFamily: 'var(--font-display)' }}>
+                                  {votingWinners.bestPlayer || (isRtl ? 'لا يوجد' : 'No votes')}
+                                </span>
+                              </div>
+
+                              {votingWinners.bestTeam && (
+                                <div style={{
+                                  background: 'rgba(255, 59, 92, 0.03)',
+                                  border: '1px solid rgba(255, 59, 92, 0.15)',
+                                  borderRadius: '10px',
+                                  padding: '12px 8px',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  justifyContent: 'center'
+                                }}>
+                                  <span style={{ fontSize: '0.75rem', color: '#ff4d6d', fontWeight: 'bold', textTransform: 'uppercase' }}>
+                                    {t.bestTeamWinner}
                                   </span>
-                                  {players.map((p) => {
-                                    const pAns = r.answers.find((a) => a.userId === p.userId);
-                                    const isSelf = p.userId === user?.id;
-                                    return (
-                                      <div 
-                                        key={p.userId} 
-                                        style={{ 
-                                          display: 'flex', 
-                                          justifyContent: 'space-between', 
-                                          alignItems: 'center', 
-                                          padding: '8px 12px', 
-                                          background: isSelf ? 'rgba(0, 242, 254, 0.03)' : 'rgba(255,255,255,0.01)', 
-                                          borderRadius: '6px',
-                                          border: isSelf ? '1px solid rgba(0, 242, 254, 0.1)' : '1px solid rgba(255,255,255,0.02)'
-                                        }}
-                                      >
-                                        <span style={{ fontSize: '0.85rem', color: '#ffffff', fontWeight: isSelf ? 700 : 500 }}>
-                                          {p.username} {isSelf && `(${isRtl ? 'أنت' : 'You'})`}
-                                        </span>
-                                        {pAns ? (
-                                          <span className={pAns.isCorrect ? "status-badge correct" : "status-badge incorrect"}>
-                                            {pAns.isCorrect ? '✔' : '✘'} {pAns.isCorrect ? t.correctLabel : t.incorrectLabel} ({(pAns.timeSpentMs / 1000).toFixed(1)}s)
-                                          </span>
-                                        ) : (
-                                          <span className="status-badge no-answer">
-                                            {t.noAnswerLabel}
-                                          </span>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
+                                  <span style={{
+                                    fontSize: '1.1rem',
+                                    fontWeight: 900,
+                                    color: votingWinners.bestTeam.includes('A') ? '#00f2fe' : '#ff3b5c',
+                                    fontFamily: 'var(--font-display)'
+                                  }}>
+                                    {votingWinners.bestTeam}
+                                  </span>
+                                </div>
+                              )}
+
+                              {votingWinners.bestAnswer && (
+                                <div style={{
+                                  background: 'rgba(0, 245, 255, 0.03)',
+                                  border: '1px solid rgba(0, 245, 255, 0.15)',
+                                  borderRadius: '10px',
+                                  padding: '12px 8px',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  justifyContent: 'center'
+                                }}>
+                                  <span style={{ fontSize: '0.75rem', color: '#00f5ff', fontWeight: 'bold', textTransform: 'uppercase' }}>
+                                    {t.bestAnswerWinner}
+                                  </span>
+                                  <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#ffffff', fontFamily: 'var(--font-display)' }}>
+                                    {votingWinners.bestAnswer || (isRtl ? 'لا يوجد' : 'No votes')}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Rank Progression Bar */}
+                        {user && myParticipant && (
+                          <div style={{ ...styles.rewardsPanelCard, gap: '12px', margin: 0, flexShrink: 0 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: 'var(--text-secondary)' }}>
+                                {t.rankProgression}
+                              </span>
+                              <span style={{
+                                fontSize: '0.8rem',
+                                fontWeight: 800,
+                                color: rpDiff >= 0 ? '#00e676' : '#ff1744'
+                              }}>
+                                {rpDiff >= 0 ? `+${rpDiff}` : rpDiff} RP
+                              </span>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <RankBadge rank={user.rank} size={40} animate={false} />
+                              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '4px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
+                                  <span style={{ fontWeight: 'bold', color: '#ffffff' }}>{user.rank}</span>
+                                  <span style={{ color: 'var(--text-secondary)' }}>{user.rankPoints} RP</span>
+                                </div>
+                                
+                                {/* Animated Progress Bar Container */}
+                                <div style={{
+                                  background: 'rgba(255, 255, 255, 0.05)',
+                                  borderRadius: '10px',
+                                  height: '10px',
+                                  width: '100%',
+                                  overflow: 'hidden',
+                                  position: 'relative',
+                                  border: '1px solid rgba(255, 255, 255, 0.03)'
+                                }}>
+                                  <div style={{
+                                    background: 'linear-gradient(90deg, #00f2fe 0%, #4facfe 100%)',
+                                    height: '100%',
+                                    width: `${progressWidth}%`,
+                                    transition: 'width 1.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                                    boxShadow: '0 0 10px rgba(0, 242, 254, 0.5)',
+                                    borderRadius: '10px'
+                                  }} />
                                 </div>
                               </div>
-                            )}
-
+                            </div>
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
+                        )}
 
-                      {/* summary footer / return btn */}
-                      <div style={styles.summaryFooter}>
+                        {/* Enhanced Match Statistics Grid */}
+                        <div style={{
+                          display: 'grid',
+                          gridTemplateColumns: '1fr 1fr',
+                          gap: '12px',
+                          margin: 0,
+                          flexShrink: 0
+                        }}>
+                          {/* Score */}
+                          <div style={styles.statCard}>
+                            <span style={styles.statHeading}>{t.score}</span>
+                            <span style={styles.statNum} className="text-glow">{score}</span>
+                          </div>
+
+                          {/* Accuracy */}
+                          <div style={styles.statCard}>
+                            <span style={styles.statHeading}>{t.accuracy}</span>
+                            <span style={styles.statNum} className="text-glow-accent">
+                              {myParticipant?.accuracy || (myAnswers.length > 0 ? Math.round((myAnswers.filter(a => a.isCorrect).length / myAnswers.length) * 100) : 0)}%
+                            </span>
+                          </div>
+
+                          {/* Avg Speed */}
+                          <div style={styles.statCard}>
+                            <span style={styles.statHeading}>{t.avgSpeed}</span>
+                            <span style={{ ...styles.statNum, color: '#ffd066' }}>
+                              {avgSpeedVal > 0 ? `${avgSpeedVal.toFixed(1)}s` : '-'}
+                            </span>
+                          </div>
+
+                          {/* Fastest Speed */}
+                          <div style={styles.statCard}>
+                            <span style={styles.statHeading}>{t.fastestSpeed}</span>
+                            <span style={{ ...styles.statNum, color: '#00e676' }}>
+                              {fastestSpeedVal > 0 ? `${fastestSpeedVal.toFixed(1)}s` : '-'}
+                            </span>
+                          </div>
+
+                          {/* Powerups Used */}
+                          <div style={{ ...styles.statCard, gridColumn: 'span 2' }}>
+                            <span style={styles.statHeading}>{t.powerupsUsed}</span>
+                            <span style={{ ...styles.statNum, color: '#a0aec0' }}>
+                              {powerupCountVal}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Team Battle Score Comparison Grid */}
+                        {isTeamMode && (
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 1fr',
+                            gap: '16px',
+                            padding: '16px',
+                            backgroundColor: 'rgba(17, 19, 31, 0.8)',
+                            border: '1px solid rgba(255, 255, 255, 0.05)',
+                            borderRadius: '12px',
+                            textAlign: 'center',
+                            margin: 0,
+                            flexShrink: 0
+                          }}>
+                            {/* Team A */}
+                            <div style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '6px',
+                              padding: '12px',
+                              border: `2px solid ${teamAScore >= teamBScore ? '#00f2fe' : 'transparent'}`,
+                              backgroundColor: 'rgba(0, 242, 254, 0.02)',
+                              borderRadius: '8px',
+                              position: 'relative'
+                            }}>
+                              {teamAScore >= teamBScore && (
+                                <span style={{ position: 'absolute', top: '-14px', left: '50%', transform: 'translateX(-50%)', fontSize: '1.2rem' }}>👑</span>
+                              )}
+                              <span style={{ fontSize: '0.8rem', color: '#00f2fe', fontWeight: 800 }}>
+                                {isRtl ? 'الفريق أ (الأزرق)' : 'TEAM A (Blue)'}
+                              </span>
+                              <span style={{ fontSize: '1.8rem', fontWeight: 900, color: '#ffffff' }}>
+                                {teamAScore}
+                              </span>
+                              <span style={{ fontSize: '0.7rem', color: '#8a93c0' }}>
+                                {`${players.filter(p => p.teamId === 'team_a').length} ${isRtl ? 'لاعبين' : 'Players'}`}
+                              </span>
+                            </div>
+
+                            {/* Team B */}
+                            <div style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '6px',
+                              padding: '12px',
+                              border: `2px solid ${teamBScore >= teamAScore ? '#ff3b5c' : 'transparent'}`,
+                              backgroundColor: 'rgba(255, 59, 92, 0.02)',
+                              borderRadius: '8px',
+                              position: 'relative'
+                            }}>
+                              {teamBScore >= teamAScore && (
+                                <span style={{ position: 'absolute', top: '-14px', left: '50%', transform: 'translateX(-50%)', fontSize: '1.2rem' }}>👑</span>
+                              )}
+                              <span style={{ fontSize: '0.8rem', color: '#ff3b5c', fontWeight: 800 }}>
+                                {isRtl ? 'الفريق ب (الأحمر)' : 'TEAM B (Red)'}
+                              </span>
+                              <span style={{ fontSize: '1.8rem', fontWeight: 900, color: '#ffffff' }}>
+                                {teamBScore}
+                              </span>
+                              <span style={{ fontSize: '0.7rem', color: '#8a93c0' }}>
+                                {`${players.filter(p => p.teamId === 'team_b').length} ${isRtl ? 'لاعبين' : 'Players'}`}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Highlights (Top Moments) */}
+                        <div style={{ ...styles.rewardsPanelCard, gap: '14px', margin: 0, flexShrink: 0 }}>
+                          <h2 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--primary)', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '8px', margin: 0 }}>
+                            {t.highlightsTitle}
+                          </h2>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            {matchHighlights.map((hl, idx) => (
+                              <div 
+                                key={idx} 
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '12px',
+                                  padding: '12px',
+                                  backgroundColor: 'rgba(255, 255, 255, 0.015)',
+                                  border: '1px solid rgba(255, 255, 255, 0.04)',
+                                  borderRadius: '10px',
+                                  transition: 'transform 0.2s ease, border-color 0.2s ease',
+                                  cursor: 'default'
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'rgba(0, 242, 254, 0.2)'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.04)'; }}
+                              >
+                                <span style={{ fontSize: '2rem' }}>{hl.icon}</span>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', textAlign: isRtl ? 'right' : 'left' }}>
+                                  <span style={{ fontWeight: 'bold', fontSize: '0.95rem', color: '#ffffff' }}>
+                                    {isRtl ? hl.title.ar : hl.title.en}
+                                  </span>
+                                  <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                                    {isRtl ? hl.desc.ar : hl.desc.en}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Achievements Unlocked */}
+                        {user && myParticipant && newlyUnlockedBadges.length > 0 && (
+                          <div style={{ 
+                            ...styles.rewardsPanelCard, 
+                            gap: '14px', 
+                            border: '1px solid rgba(255, 215, 0, 0.25)', 
+                            background: 'linear-gradient(135deg, rgba(255, 215, 0, 0.02) 0%, rgba(17, 19, 31, 0.8) 100%)',
+                            margin: 0,
+                            flexShrink: 0
+                          }}>
+                            <h2 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#ffd700', borderBottom: '1px solid rgba(255,215,0,0.15)', paddingBottom: '8px', margin: 0 }}>
+                              🏆 {isRtl ? 'تم فتح إنجازات جديدة!' : 'Achievements Unlocked!'}
+                            </h2>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                              {newlyUnlockedBadges.map((badgeKey) => {
+                                const badge = BADGES_METADATA.find(b => b.key === badgeKey);
+                                if (!badge) return null;
+                                return (
+                                  <div 
+                                    key={badgeKey} 
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '12px',
+                                      padding: '12px',
+                                      backgroundColor: 'rgba(255, 215, 0, 0.03)',
+                                      border: '1px solid rgba(255, 215, 0, 0.15)',
+                                      borderRadius: '10px'
+                                    }}
+                                  >
+                                    <span style={{ fontSize: '2rem' }}>{badge.icon || '🏅'}</span>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', textAlign: isRtl ? 'right' : 'left' }}>
+                                      <span style={{ fontWeight: 'bold', fontSize: '0.95rem', color: '#ffd700' }}>
+                                        {isRtl ? badge.name.ar : badge.name.en}
+                                      </span>
+                                      <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                                        {isRtl ? badge.desc.ar : badge.desc.en}
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Rewards Panel */}
+                        {user && myParticipant && (
+                          <div style={{ ...styles.rewardsPanelCard, margin: 0, flexShrink: 0 }}>
+                            <div style={styles.rewardDetailRow}>
+                              <span style={{ color: 'var(--text-secondary)' }}>{t.coinsEarned}</span>
+                              <span style={{ color: '#ffb300', fontWeight: 800 }}>+ {coinsEarnedVal} 🪙</span>
+                            </div>
+                            {tokensEarnedVal > 0 && (
+                              <div style={styles.rewardDetailRow}>
+                                <span style={{ color: 'var(--text-secondary)' }}>{isRtl ? 'الرموز المكتسبة' : 'Tokens Earned'}</span>
+                                <span style={{ color: '#00f2fe', fontWeight: 800 }}>+ {tokensEarnedVal} 💎</span>
+                              </div>
+                            )}
+                            <div style={styles.rewardDetailRow}>
+                              <span style={{ color: 'var(--text-secondary)' }}>{t.xpGained}</span>
+                              <span style={{ color: '#00e676', fontWeight: 800 }}>+ {xpEarnedVal} XP</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Standings Table / Scoreboard */}
+                        {players.length > 0 && (
+                          <div style={{ ...styles.rewardsPanelCard, gap: '16px', margin: 0, flexShrink: 0 }}>
+                            <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--primary)', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '10px', margin: 0 }}>
+                              🏆 {t.standingsTitle}
+                            </h2>
+                            <div style={{ overflowX: 'auto', width: '100%' }}>
+                              <table className="glass-table">
+                                <thead>
+                                  <tr>
+                                    <th>{t.rankHeader}</th>
+                                    <th>{t.playerHeader}</th>
+                                    <th>{t.scoreHeader}</th>
+                                    <th>{t.accuracyHeader}</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {players.map((p, idx) => {
+                                    const isSelf = p.userId === user?.id;
+                                    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
+                                    return (
+                                      <tr key={p.userId} className={isSelf ? "glass-table-row self" : "glass-table-row"}>
+                                        <td style={{ fontWeight: 800, fontSize: idx < 3 ? '1.2rem' : '0.9rem' }}>{medal}</td>
+                                        <td>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: isRtl ? 'flex-end' : 'flex-start' }}>
+                                            <RankBadge rank={p.rank} size={32} animate={false} />
+                                            <span style={{ fontWeight: isSelf ? 800 : 500, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                              {p.username}
+                                              {p.isMvp && <span title="MVP" style={{ cursor: 'help' }}>👑</span>}
+                                            </span>
+                                            {isSelf && (
+                                              <span style={{ fontSize: '0.7rem', padding: '2px 6px', background: 'rgba(0, 242, 254, 0.2)', border: '1px solid var(--primary)', borderRadius: '4px', color: 'var(--primary)', fontWeight: 800 }}>
+                                                {isRtl ? 'أنت' : 'YOU'}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </td>
+                                        <td style={{ fontWeight: 700, color: isSelf ? 'var(--primary)' : '#ffffff' }}>{p.score}</td>
+                                        <td style={{ color: 'var(--text-secondary)' }}>{p.accuracy}%</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Final Audience Standings (If any spectator scores exist) */}
+                        {audienceLeaderboard && audienceLeaderboard.length > 0 && (
+                          <div style={{ ...styles.rewardsPanelCard, gap: '16px', margin: 0, flexShrink: 0 }}>
+                            <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#ffd700', borderBottom: '1px solid rgba(255,215,0,0.15)', paddingBottom: '10px', margin: 0 }}>
+                              🏆 {isRtl ? 'النتائج النهائية للجمهور' : 'Final Audience Standings'}
+                            </h2>
+                            <div style={{ overflowX: 'auto', width: '100%' }}>
+                              <table className="glass-table" style={{ borderColor: 'rgba(255, 215, 0, 0.15)' }}>
+                                <thead>
+                                  <tr>
+                                    <th>{t.rankHeader}</th>
+                                    <th>{isRtl ? 'المتفرج' : 'Spectator'}</th>
+                                    <th>{t.scoreHeader}</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {audienceLeaderboard.map((entry, idx) => {
+                                    const isLocalGuest = entry.username === audienceNickname || (user && entry.username === user.username);
+                                    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
+                                    return (
+                                      <tr key={idx} className={isLocalGuest ? "glass-table-row self" : "glass-table-row"} style={{
+                                        backgroundColor: isLocalGuest ? 'rgba(255, 215, 0, 0.05)' : 'transparent'
+                                      }}>
+                                        <td style={{ fontWeight: 800, fontSize: idx < 3 ? '1.2rem' : '0.9rem', color: isLocalGuest ? '#ffd700' : '#ffffff' }}>{medal}</td>
+                                        <td>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: isRtl ? 'flex-end' : 'flex-start' }}>
+                                            <span style={{ fontWeight: isLocalGuest ? 800 : 500, color: isLocalGuest ? '#ffd700' : '#ffffff' }}>
+                                              {entry.username}
+                                            </span>
+                                            {isLocalGuest && (
+                                              <span style={{ fontSize: '0.7rem', padding: '2px 6px', background: 'rgba(255, 215, 0, 0.2)', border: '1px solid #ffd700', borderRadius: '4px', color: '#ffd700', fontWeight: 800 }}>
+                                                {isRtl ? 'أنت' : 'YOU'}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </td>
+                                        <td style={{ fontWeight: 700, color: isLocalGuest ? '#ffd700' : '#00f5ff' }}>{entry.score}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Round-by-Round Breakdown Matrix */}
+                        <div style={{ ...styles.rewardsPanelCard, gap: '16px', margin: 0, flexShrink: 0 }}>
+                          <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--primary)', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '10px', margin: 0 }}>
+                            📊 {t.detailedReportTitle}
+                          </h2>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            {rounds.map((r) => {
+                              const isExpanded = expandedRound === r.roundNumber;
+                              return (
+                                <div 
+                                  key={r.roundNumber} 
+                                  style={{ 
+                                    background: 'rgba(255, 255, 255, 0.01)', 
+                                    border: '1px solid rgba(255, 255, 255, 0.04)', 
+                                    borderRadius: '8px',
+                                    overflow: 'hidden'
+                                  }}
+                                >
+                                  {/* Accordion Trigger Header */}
+                                  <div 
+                                    className="accordion-trigger"
+                                    style={{ 
+                                      padding: '14px 16px', 
+                                      display: 'flex', 
+                                      justifyContent: 'space-between', 
+                                      alignItems: 'center',
+                                      gap: '12px',
+                                      background: isExpanded ? 'rgba(255, 255, 255, 0.03)' : 'transparent'
+                                    }}
+                                    onClick={() => setExpandedRound(isExpanded ? null : r.roundNumber)}
+                                  >
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                      <span style={{ fontWeight: 800, color: 'var(--primary)' }}>Q{r.roundNumber}</span>
+                                      <span style={{ color: '#ffffff', fontSize: '0.88rem', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: '180px' }}>
+                                        {getLocalizedText(r.questionBody)}
+                                      </span>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                      {/* Mini indicators for players' accuracy */}
+                                      <div style={{ display: 'flex', gap: '4px' }}>
+                                        {players.map((p) => {
+                                          const pAns = r.answers.find((a) => a.userId === p.userId);
+                                          return (
+                                            <div 
+                                              key={p.userId} 
+                                              title={`${p.username}: ${pAns ? (pAns.isCorrect ? 'Correct' : 'Incorrect') : 'No Answer'}`}
+                                              style={{ 
+                                                width: '8px', 
+                                                height: '8px', 
+                                                borderRadius: '50%', 
+                                                background: pAns ? (pAns.isCorrect ? '#00e676' : '#ff1744') : 'rgba(255,255,255,0.1)' 
+                                              }} 
+                                            />
+                                          );
+                                        })}
+                                      </div>
+                                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                        {isExpanded ? '▲' : '▼'}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* Accordion Content */}
+                                  {isExpanded && (
+                                    <div style={{ padding: '16px', borderTop: '1px solid rgba(255, 255, 255, 0.04)', display: 'flex', flexDirection: 'column', gap: '12px', background: 'rgba(0, 0, 0, 0.15)' }}>
+                                      <div style={{ fontSize: '0.9rem', color: '#ffffff', lineHeight: 1.5, background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.03)' }}>
+                                        <span style={{ fontWeight: 700, display: 'block', color: 'var(--primary)', marginBottom: '4px' }}>
+                                          {isRtl ? 'السؤال الكامل:' : 'Full Question:'}
+                                        </span>
+                                        {getLocalizedText(r.questionBody)}
+                                      </div>
+
+                                      {/* Player results details */}
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', margin: '4px 0' }}>
+                                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                                          {isRtl ? 'إجابات اللاعبين:' : 'Player Performance:'}
+                                        </span>
+                                        {players.map((p) => {
+                                          const pAns = r.answers.find((a) => a.userId === p.userId);
+                                          const isSelf = p.userId === user?.id;
+                                          return (
+                                            <div 
+                                              key={p.userId} 
+                                              style={{ 
+                                                display: 'flex', 
+                                                justifyContent: 'space-between', 
+                                                alignItems: 'center', 
+                                                padding: '8px 12px', 
+                                                background: isSelf ? 'rgba(0, 242, 254, 0.03)' : 'rgba(255,255,255,0.01)', 
+                                                borderRadius: '6px',
+                                                border: isSelf ? '1px solid rgba(0, 242, 254, 0.1)' : '1px solid rgba(255,255,255,0.02)'
+                                              }}
+                                            >
+                                              <span style={{ fontSize: '0.85rem', color: '#ffffff', fontWeight: isSelf ? 700 : 500 }}>
+                                                {p.username} {isSelf && `(${isRtl ? 'أنت' : 'You'})`}
+                                              </span>
+                                              {pAns ? (
+                                                <span className={pAns.isCorrect ? "status-badge correct" : "status-badge incorrect"}>
+                                                  {pAns.isCorrect ? '✔' : '✘'} {pAns.isCorrect ? t.correctLabel : t.incorrectLabel} ({(pAns.timeSpentMs / 1000).toFixed(1)}s)
+                                                </span>
+                                              ) : (
+                                                <span className="status-badge no-answer">
+                                                  {t.noAnswerLabel}
+                                                </span>
+                                              )}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Social Share Buttons */}
+                        <div style={{ ...styles.rewardsPanelCard, gap: '12px', margin: 0, flexShrink: 0 }}>
+                          <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: 'var(--text-secondary)' }}>
+                            {t.shareResult}
+                          </span>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button 
+                              onClick={shareToTwitter}
+                              style={{
+                                flex: 1,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '6px',
+                                padding: '10px',
+                                backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                                border: '1px solid rgba(255, 255, 255, 0.1)',
+                                borderRadius: '8px',
+                                color: '#ffffff',
+                                cursor: 'pointer',
+                                fontSize: '0.85rem',
+                                fontWeight: 'bold',
+                                transition: 'all 0.2s ease'
+                              }}
+                              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)'; e.currentTarget.style.borderColor = '#00f2fe'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.03)'; e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)'; }}
+                            >
+                              𝕏 Twitter
+                            </button>
+                            <button 
+                              onClick={shareToWhatsApp}
+                              style={{
+                                flex: 1,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '6px',
+                                padding: '10px',
+                                backgroundColor: 'rgba(37, 211, 102, 0.08)',
+                                border: '1px solid rgba(37, 211, 102, 0.2)',
+                                borderRadius: '8px',
+                                color: '#25D366',
+                                cursor: 'pointer',
+                                fontSize: '0.85rem',
+                                fontWeight: 'bold',
+                                transition: 'all 0.2s ease'
+                              }}
+                              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(37, 211, 102, 0.15)'; e.currentTarget.style.borderColor = '#25D366'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(37, 211, 102, 0.08)'; e.currentTarget.style.borderColor = 'rgba(37, 211, 102, 0.2)'; }}
+                            >
+                              💬 WhatsApp
+                            </button>
+                            <button 
+                              onClick={copyToClipboard}
+                              style={{
+                                flex: 1,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '6px',
+                                padding: '10px',
+                                backgroundColor: 'rgba(0, 242, 254, 0.08)',
+                                border: '1px solid rgba(0, 242, 254, 0.2)',
+                                borderRadius: '8px',
+                                color: '#00f2fe',
+                                cursor: 'pointer',
+                                fontSize: '0.85rem',
+                                fontWeight: 'bold',
+                                transition: 'all 0.2s ease'
+                              }}
+                              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(0, 242, 254, 0.15)'; e.currentTarget.style.borderColor = '#00f2fe'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(0, 242, 254, 0.08)'; e.currentTarget.style.borderColor = 'rgba(0, 242, 254, 0.2)'; }}
+                            >
+                              🔗 {isRtl ? 'نسخ' : 'Copy'}
+                            </button>
+                          </div>
+                        </div>
+
+                      </div>
+
+                      {/* Fixed Footer */}
+                      <div style={{ ...styles.summaryFooter, flexShrink: 0 }}>
                         <button style={styles.returnHubBtn} onClick={() => { playSFX('click'); setScreen('dashboard'); setVotingActive(false); setVotingWinners(null); setMyVotes({}); setLiveVotes({}); }}>
                           {t.dashboardBtn}
                         </button>
                       </div>
+
+                      {/* Copied Clipboard Toast */}
+                      {copiedToastVisible && (
+                        <div style={{
+                          position: 'absolute',
+                          bottom: '80px',
+                          left: '50%',
+                          transform: 'translateX(-50%)',
+                          backgroundColor: '#00f2fe',
+                          color: '#05060f',
+                          padding: '10px 20px',
+                          borderRadius: '20px',
+                          fontSize: '0.9rem',
+                          fontWeight: 'bold',
+                          boxShadow: '0 4px 15px rgba(0, 242, 254, 0.4)',
+                          zIndex: 10000,
+                          pointerEvents: 'none',
+                          transition: 'opacity 0.2s ease'
+                        }}>
+                          {t.copiedToast}
+                        </div>
+                      )}
                     </>
                   )}
 
