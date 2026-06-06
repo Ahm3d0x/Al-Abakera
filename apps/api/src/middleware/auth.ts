@@ -61,3 +61,15 @@ export async function requireAuth(
     return res.status(500).json({ error: 'Internal server error during authentication' });
   }
 }
+
+export function requireAdmin(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) {
+  if (!req.profile || !req.profile.isAdmin) {
+    return res.status(403).json({ error: 'Access denied. Administrator privileges required.' });
+  }
+  next();
+}
+

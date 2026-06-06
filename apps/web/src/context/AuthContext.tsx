@@ -10,7 +10,7 @@ interface AuthContextType {
   supabaseUser: SupabaseUser | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
-  signUp: (email: string, password: string, username: string) => Promise<{ error: AuthError | null }>;
+  signUp: (email: string, password: string, username: string, deviceFingerprint?: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<{ error: AuthError | null }>;
   resetPassword: (email: string) => Promise<{ error: AuthError | null }>;
   updatePassword: (password: string) => Promise<{ error: AuthError | null }>;
@@ -75,6 +75,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           claimedSeasonRewards: data.claimed_season_rewards || [],
           createdAt: new Date(data.created_at),
           updatedAt: new Date(data.updated_at),
+          isAdmin: data.is_admin,
         };
         return mappedUser;
       }
@@ -136,13 +137,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error };
   };
 
-  const signUp = async (email: string, password: string, username: string) => {
+  const signUp = async (email: string, password: string, username: string, deviceFingerprint?: string) => {
     const { error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: {
           username,
+          device_fingerprint: deviceFingerprint,
         },
       },
     });

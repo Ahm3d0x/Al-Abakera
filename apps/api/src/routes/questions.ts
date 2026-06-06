@@ -3,6 +3,8 @@ import { supabaseAdmin } from '../lib/supabase';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
 import { gradeAnswer } from '../lib/grading';
 import { Question } from '@mind-race/shared';
+import { getCachedData, setCachedData, invalidateCachePattern } from '../lib/cache';
+
 
 const STATIC_FALLBACK_QUESTIONS: any[] = [
   {
@@ -220,8 +222,15 @@ function sanitizeQuestion(q: any, isStaff: boolean) {
 // 1. List questions (filtered by category, difficulty, type)
 router.get('/', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
   const { category, difficulty, type } = req.query;
+  const isStaff = !!(req.profile?.isAdmin || req.profile?.isTeacher);
+  const cacheKey = `questions:list:cat_${category || 'all'}:diff_${difficulty || 'all'}:type_${type || 'all'}:staff_${isStaff}`;
 
   try {
+    const cached = await getCachedData(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
     let dbQuery = supabaseAdmin.from('questions').select('*');
 
     if (category) {
@@ -240,8 +249,9 @@ router.get('/', requireAuth as any, async (req: AuthenticatedRequest, res: Respo
       return res.status(500).json({ error: error.message });
     }
 
-    const isStaff = !!(req.profile?.isAdmin || req.profile?.isTeacher);
     const sanitized = (questions || []).map((q: any) => sanitizeQuestion(q, isStaff));
+    
+    await setCachedData(cacheKey, sanitized, 300); // 5 minutes cache
 
     return res.json(sanitized);
   } catch (err) {
@@ -252,7 +262,16 @@ router.get('/', requireAuth as any, async (req: AuthenticatedRequest, res: Respo
 
 // 1.5. Get Daily Challenge questions (deterministic calendar seed)
 router.get('/daily', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  const isStaff = !!(req.profile?.isAdmin || req.profile?.isTeacher);
+  const todayStr = new Date().toISOString().split('T')[0];
+  const cacheKey = `questions:daily:${todayStr}:staff_${isStaff}`;
+
   try {
+    const cached = await getCachedData(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
     const { data: questions, error } = await supabaseAdmin
       .from('questions')
       .select('*');
@@ -305,7 +324,6 @@ router.get('/daily', requireAuth as any, async (req: AuthenticatedRequest, res: 
     }
 
     // Determine deterministic seed based on current date string YYYY-MM-DD
-    const todayStr = new Date().toISOString().split('T')[0];
     let seed = 0;
     for (let i = 0; i < todayStr.length; i++) {
       seed += todayStr.charCodeAt(i);
@@ -318,8 +336,9 @@ router.get('/daily', requireAuth as any, async (req: AuthenticatedRequest, res: 
       dailyQuestions.push(questions[index]);
     }
 
-    const isStaff = !!(req.profile?.isAdmin || req.profile?.isTeacher);
     const sanitized = dailyQuestions.map((q) => sanitizeQuestion(q, isStaff));
+
+    await setCachedData(cacheKey, sanitized, 3600); // 1 hour cache
 
     return res.json(sanitized);
   } catch (err) {
@@ -331,6 +350,7 @@ router.get('/daily', requireAuth as any, async (req: AuthenticatedRequest, res: 
 // 2. Get single question
 router.get('/:id', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
+  const isStaff = !!(req.profile?.isAdmin || req.profile?.isTeacher);
 
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
   if (!isUuid) {
@@ -338,11 +358,17 @@ router.get('/:id', requireAuth as any, async (req: AuthenticatedRequest, res: Re
     if (!staticQ) {
       return res.status(404).json({ error: 'Question not found' });
     }
-    const isStaff = !!(req.profile?.isAdmin || req.profile?.isTeacher);
     return res.json(sanitizeQuestion(staticQ, isStaff));
   }
 
+  const cacheKey = `questions:single:${id}:staff_${isStaff}`;
+
   try {
+    const cached = await getCachedData(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
     const { data: question, error } = await supabaseAdmin
       .from('questions')
       .select('*')
@@ -356,8 +382,10 @@ router.get('/:id', requireAuth as any, async (req: AuthenticatedRequest, res: Re
       return res.status(500).json({ error: error.message });
     }
 
-    const isStaff = !!(req.profile?.isAdmin || req.profile?.isTeacher);
-    return res.json(sanitizeQuestion(question, isStaff));
+    const sanitized = sanitizeQuestion(question, isStaff);
+    await setCachedData(cacheKey, sanitized, 300); // 5 minutes cache
+
+    return res.json(sanitized);
   } catch (err) {
     console.error('Get question endpoint error:', err);
     return res.status(500).json({ error: 'Internal server error getting question' });
@@ -413,6 +441,9 @@ router.post('/', requireAuth as any, async (req: AuthenticatedRequest, res: Resp
       return res.status(500).json({ error: error.message });
     }
 
+    // Invalidate questions cache
+    await invalidateCachePattern('questions:');
+
     return res.status(201).json(question);
   } catch (err) {
     console.error('Create question endpoint error:', err);
@@ -445,6 +476,9 @@ router.put('/:id', requireAuth as any, async (req: AuthenticatedRequest, res: Re
       return res.status(500).json({ error: error.message });
     }
 
+    // Invalidate questions cache
+    await invalidateCachePattern('questions:');
+
     return res.json(question);
   } catch (err) {
     console.error('Update question endpoint error:', err);
@@ -467,6 +501,9 @@ router.delete('/:id', requireAuth as any, async (req: AuthenticatedRequest, res:
     if (error) {
       return res.status(500).json({ error: error.message });
     }
+
+    // Invalidate questions cache
+    await invalidateCachePattern('questions:');
 
     return res.json({ status: 'success', message: 'Question deleted successfully' });
   } catch (err) {
@@ -518,6 +555,9 @@ router.post('/:id/rate', requireAuth as any, async (req: AuthenticatedRequest, r
     if (updateErr) {
       return res.status(500).json({ error: updateErr.message });
     }
+
+    // Invalidate questions cache
+    await invalidateCachePattern('questions:');
 
     return res.json({ status: 'success', id: updated.id, rating: updated.rating, ratingCount: updated.rating_count });
   } catch (err) {

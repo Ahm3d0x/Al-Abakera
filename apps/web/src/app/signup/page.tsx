@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import Link from 'next/link';
+import { getDeviceFingerprint } from '../../lib/fingerprint';
 
 export default function SignupPage() {
   const { signUp, signInWithOAuth } = useAuth();
@@ -58,7 +59,8 @@ export default function SignupPage() {
     setLoading(true);
 
     try {
-      const { error } = await signUp(email, password, username);
+      const fp = getDeviceFingerprint();
+      const { error } = await signUp(email, password, username, fp);
       if (error) {
         setErrorMsg(error.message || activeText.errorDefault);
       } else {

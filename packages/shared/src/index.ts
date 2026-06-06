@@ -50,6 +50,7 @@ export interface User {
   claimedSeasonRewards?: string[];
   createdAt: Date;
   updatedAt: Date;
+  isAdmin?: boolean;
 }
 
 // ==========================================

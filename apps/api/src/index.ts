@@ -14,6 +14,11 @@ import packsRouter from './routes/packs';
 import storeRouter from './routes/store';
 import questsRouter from './routes/quests';
 import seasonsRouter from './routes/seasons';
+import securityRouter, { logSecurityEvent } from './routes/security';
+import adminRouter from './routes/admin';
+import leaderboardRouter from './routes/leaderboard';
+import { createAdapter } from '@socket.io/redis-adapter';
+import Redis from 'ioredis';
 
 
 // Load environment variables
@@ -103,6 +108,9 @@ app.use('/api/v1/packs', packsRouter);
 app.use('/api/v1/store', storeRouter);
 app.use('/api/v1/quests', questsRouter);
 app.use('/api/v1/seasons', seasonsRouter);
+app.use('/api/v1/security', securityRouter);
+app.use('/api/v1/admin', adminRouter);
+app.use('/api/v1/leaderboard', leaderboardRouter);
 
 // Admin Route: Apply rank decay rules to inactive players (Master and above)
 app.post('/api/v1/admin/apply-decay', async (req, res) => {
@@ -136,6 +144,39 @@ export const io = new Server(httpServer, {
   },
 });
 
+// Configure Redis pub/sub Socket.io adapter if REDIS_URL is provided
+const redisUrl = process.env.REDIS_URL;
+if (redisUrl) {
+  try {
+    const pubClient = new Redis(redisUrl, {
+      maxRetriesPerRequest: 1,
+      connectTimeout: 2000,
+      retryStrategy: () => null,
+    });
+
+    pubClient.on('error', (err) => {
+      console.warn('[Socket Redis] Pub client connection failed/offline:', err.message || err);
+    });
+
+    pubClient.on('ready', () => {
+      try {
+        const subClient = pubClient.duplicate();
+        subClient.on('error', (err) => {
+          console.warn('[Socket Redis] Sub client warning:', err.message || err);
+        });
+        io.adapter(createAdapter(pubClient, subClient));
+        console.log('[Socket Redis] Redis Adapter configured successfully for Socket.io scaling.');
+      } catch (adapterErr: any) {
+        console.warn('[Socket Redis] Failed to attach adapter:', adapterErr.message || adapterErr);
+      }
+    });
+  } catch (err: any) {
+    console.warn('[Socket Redis] Failed to initialize Redis clients:', err.message || err);
+  }
+} else {
+  console.log('[Socket Redis] No REDIS_URL provided. Using in-memory Socket.io adapter.');
+}
+
 // ==========================================
 // Active Match Session Structure (In-Memory)
 // ==========================================
@@ -157,12 +198,16 @@ interface ActiveMatch {
   };
   votingDurationLeft?: number;
   votingInterval?: NodeJS.Timeout | null;
+  roundStartedAt?: number;
 }
 
 const activeMatches = new Map<string, ActiveMatch>();
 
 // Grace period timers for disconnected players (userId -> timeout)
 const disconnectTimers = new Map<string, NodeJS.Timeout>();
+
+// Answer history for bot pattern analysis
+const playerAnswerTimings = new Map<string, { timeSpentMs: number; submittedAt: number; answer: any }[]>();
 
 // 10 Fallback sample questions in case database questions is empty
 const BACKEND_SAMPLE_QUESTIONS: Question[] = [
@@ -335,6 +380,7 @@ function startMatchTicker(roomId: string) {
 
   match.timeLeft = 30;
   match.buzzedPlayerId = null;
+  match.roundStartedAt = Date.now();
 
   io.to(roomId).emit('game:round_start', {
     roundIndex: match.currentRound,
@@ -678,11 +724,17 @@ io.use(async (socket, next) => {
 io.on('connection', (socket) => {
   const email = socket.data.user?.email || 'unknown';
   const userId = socket.data.user?.id;
+  const connIp = socket.handshake.address || socket.handshake.headers['x-forwarded-for']?.toString() || 'unknown';
+  const connFingerprint = socket.handshake.auth?.fingerprint || null;
+
   console.log(`[Socket] User connected: ${socket.id} (Authenticated: ${email})`);
+  logSecurityEvent(userId || null, socket.data.user?.user_metadata?.username || null, 'socket:connect', connIp, connFingerprint);
 
   socket.on(GameEvents.JOIN_ROOM, async ({ roomId, username }) => {
     const isAudienceUser = !!socket.handshake.auth?.isAudience || !!socket.data.user?.isGuest;
     socket.data.roomId = roomId;
+
+    logSecurityEvent(userId || null, username || null, 'room:join', connIp, connFingerprint, { roomId, isAudienceUser });
 
     if (isAudienceUser) {
       socket.join(roomId);
@@ -799,6 +851,7 @@ io.on('connection', (socket) => {
     socket.leave(roomId);
     socket.leave(roomId + ':players');
     console.log(`[Socket] User ${userId} left room ${roomId}`);
+    logSecurityEvent(userId || null, socket.data.user?.user_metadata?.username || null, 'room:leave', connIp, connFingerprint, { roomId });
     await broadcastRoomState(roomId);
   });
 
@@ -1059,6 +1112,67 @@ io.on('connection', (socket) => {
     // Reject answers if they aren't the buzzed player (when buzzer active)
     if (match.buzzedPlayerId && match.buzzedPlayerId !== userId) {
       return;
+    }
+
+    const timeSpentMs = Date.now() - (match.roundStartedAt || Date.now());
+
+    // Event log
+    logSecurityEvent(userId, socket.data.user.user_metadata?.username || 'player', 'game:submit_answer', connIp, connFingerprint, { roomId, roundIndex: match.currentRound, timeSpentMs });
+
+    // In-game Bot Pattern Analysis
+    if (userId) {
+      if (!playerAnswerTimings.has(userId)) {
+        playerAnswerTimings.set(userId, []);
+      }
+      const timings = playerAnswerTimings.get(userId)!;
+      timings.push({ timeSpentMs, submittedAt: Date.now(), answer });
+
+      if (timings.length > 5) {
+        timings.shift();
+      }
+
+      const isTooFast = timeSpentMs < 150;
+      
+      let hasZeroVariance = false;
+      if (timings.length >= 3) {
+        const mean = timings.reduce((sum, t) => sum + t.timeSpentMs, 0) / timings.length;
+        const variance = timings.reduce((sum, t) => sum + Math.pow(t.timeSpentMs - mean, 2), 0) / timings.length;
+        const stdDev = Math.sqrt(variance);
+        if (stdDev < 5) {
+          hasZeroVariance = true;
+        }
+      }
+
+      let hasIdenticalRepeatedInput = false;
+      const recentAnswers = timings.map(t => typeof t.answer === 'string' ? t.answer : JSON.stringify(t.answer));
+      if (recentAnswers.length >= 4 && recentAnswers.every(ans => ans === recentAnswers[0])) {
+        hasIdenticalRepeatedInput = true;
+      }
+
+      if (isTooFast || hasZeroVariance || hasIdenticalRepeatedInput) {
+        const flagReason = isTooFast 
+          ? `Inhuman response speed (${timeSpentMs}ms)` 
+          : hasZeroVariance 
+            ? `Zero timing variance (<5ms deviation)` 
+            : `Repeated identical answer pattern`;
+
+        await supabaseAdmin
+          .from('profiles')
+          .update({
+            is_flagged: true,
+            flag_reason: `Suspicious activity: ${flagReason}`
+          })
+          .eq('id', userId);
+
+        await logSecurityEvent(
+          userId,
+          socket.data.user.user_metadata?.username || 'player',
+          'security:bot_pattern_detected',
+          connIp,
+          connFingerprint,
+          { timeSpentMs, flagReason, answersHistory: recentAnswers }
+        );
+      }
     }
 
     try {

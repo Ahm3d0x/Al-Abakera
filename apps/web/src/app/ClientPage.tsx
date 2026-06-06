@@ -13,9 +13,25 @@ import { CosmeticShopModal } from '../components/CosmeticShopModal';
 import { QuestsPanel } from '../components/QuestsPanel';
 import { SeasonTrackerPanel } from '../components/SeasonTrackerPanel';
 import { SettingsModal } from '../components/SettingsModal';
+import { getDeviceFingerprint } from '../lib/fingerprint';
+import { AdminModerationModal } from '../components/AdminModerationModal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:5000';
+const CDN_URL = process.env.NEXT_PUBLIC_CDN_URL || '';
+
+const getAssetUrl = (path: string | null | undefined): string => {
+  if (!path) return '';
+  if (/^(https?:|data:)/i.test(path)) {
+    return path;
+  }
+  if (CDN_URL) {
+    const base = CDN_URL.endsWith('/') ? CDN_URL.slice(0, -1) : CDN_URL;
+    const relative = path.startsWith('/') ? path : `/${path}`;
+    return `${base}${relative}`;
+  }
+  return path;
+};
 
 // ==========================================
 // Web Audio API Sound Generator (No external assets required!)
@@ -802,6 +818,13 @@ export default function ClientPage() {
 
   const [screen, setScreen] = useState<'dashboard' | 'lobby' | 'cinematic' | 'game' | 'summary'>('dashboard');
   const [apiStatus, setApiStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+  
+  // Anti-Cheat states
+  const [deviceBlockedStatus, setDeviceBlockedStatus] = useState<'LOADING' | 'VERIFIED' | 'BLOCKED' | 'SUSPENDED'>('VERIFIED');
+  const [suspensionReason, setSuspensionReason] = useState('');
+  const [isAppealSubmitted, setIsAppealSubmitted] = useState(false);
+  const [appealReason, setAppealReason] = useState('');
+  const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [socketStatus, setSocketStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [latency, setLatency] = useState<number | null>(null);
   
@@ -1913,6 +1936,81 @@ export default function ClientPage() {
     }
   }
 
+  // Verify Device on load/user change
+  useEffect(() => {
+    async function verifyDevice() {
+      if (!user) {
+        setDeviceBlockedStatus('VERIFIED');
+        return;
+      }
+      
+      setDeviceBlockedStatus('LOADING');
+      try {
+        const fingerprint = getDeviceFingerprint();
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        const res = await fetch(`${API_URL}/api/v1/security/verify-device`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token || ''}`
+          },
+          body: JSON.stringify({ fingerprint })
+        });
+        const data = await res.json();
+        
+        if (data.status === 'verified') {
+          setDeviceBlockedStatus('VERIFIED');
+        } else if (data.status === 'suspended') {
+          setDeviceBlockedStatus('SUSPENDED');
+          setSuspensionReason(data.reason || '');
+        } else if (data.status === 'blocked') {
+          const { data: appeal } = await supabase
+            .from('device_appeals')
+            .select('status')
+            .eq('user_id', user.id)
+            .eq('device_fingerprint', fingerprint)
+            .eq('status', 'PENDING')
+            .maybeSingle();
+            
+          if (appeal) {
+            setIsAppealSubmitted(true);
+          }
+          setDeviceBlockedStatus('BLOCKED');
+        }
+      } catch (err) {
+        console.error('Verify device error:', err);
+        setDeviceBlockedStatus('VERIFIED');
+      }
+    }
+    
+    verifyDevice();
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleAppealSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!appealReason.trim()) return;
+    try {
+      const fingerprint = getDeviceFingerprint();
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      const res = await fetch(`${API_URL}/api/v1/security/appeal`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token || ''}`
+        },
+        body: JSON.stringify({ fingerprint, reason: appealReason })
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        setIsAppealSubmitted(true);
+      }
+    } catch (err) {
+      console.error('Error submitting appeal:', err);
+    }
+  };
+
   // Capture previous rank when gameplay starts
   useEffect(() => {
     if ((screen === 'game' || screen === 'cinematic') && user) {
@@ -2640,6 +2738,27 @@ export default function ClientPage() {
   const loadLeaderboardData = async (category: string = 'Global') => {
     setLeaderboardCategory(category);
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      
+      if (token) {
+        const res = await fetch(`${API_URL}/api/v1/leaderboard?category=${category}&limit=10`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (res.ok) {
+          const body = await res.json();
+          if (body.status === 'success' && body.leaderboard) {
+            setLeaderboard(body.leaderboard);
+            return;
+          }
+        }
+      }
+
+      // Fallback if backend API is offline or returns error
+      console.warn('[Leaderboard] Backend cached route failed or token missing. Falling back to direct Supabase RPC.');
       const { data, error } = await supabase.rpc('get_category_leaderboard', {
         p_category: category,
         p_limit: 10
@@ -2648,7 +2767,7 @@ export default function ClientPage() {
       if (!error && data) {
         setLeaderboard(data);
       } else {
-        console.error('Error fetching leaderboard RPC:', error);
+        console.error('Error fetching leaderboard RPC fallback:', error);
         // Fallback to basic profiles query for Global if RPC is not deployed yet
         if (category === 'Global') {
           const { data: fbData, error: fbErr } = await supabase
@@ -5173,6 +5292,180 @@ export default function ClientPage() {
   const selfPart = participants.find(p => p.userId === user?.id);
   const isSpectator = isAudienceSpectator || selfPart?.isSpectator || false;
 
+  if (deviceBlockedStatus === 'BLOCKED' || deviceBlockedStatus === 'SUSPENDED' || deviceBlockedStatus === 'LOADING') {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#05060f',
+        color: '#ffffff',
+        fontFamily: 'var(--font-ui)',
+        padding: '20px',
+        boxSizing: 'border-box'
+      }} dir={isRtl ? 'rtl' : 'ltr'}>
+        {deviceBlockedStatus === 'LOADING' ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
+            <div style={{
+              width: '50px',
+              height: '50px',
+              borderRadius: '50%',
+              border: '3px solid rgba(255, 255, 255, 0.05)',
+              borderTopColor: '#00f2fe',
+              animation: 'spin 1s linear infinite'
+            }}></div>
+            <span style={{ fontSize: '1.1rem', color: '#8a93c0', fontFamily: 'monospace' }}>
+              {isRtl ? 'جاري التحقق من أمان الجهاز...' : 'Verifying device security...'}
+            </span>
+            <style>{`
+              @keyframes spin {
+                to { transform: rotate(360deg); }
+              }
+            `}</style>
+          </div>
+        ) : deviceBlockedStatus === 'SUSPENDED' ? (
+          <div style={{
+            maxWidth: '450px',
+            width: '100%',
+            backgroundColor: 'rgba(11, 13, 26, 0.95)',
+            border: '1px solid #ff3b5c',
+            borderRadius: '16px',
+            padding: '30px',
+            boxShadow: '0 8px 32px rgba(255, 59, 92, 0.15)',
+            textAlign: 'center',
+          }}>
+            <h2 style={{ color: '#ff3b5c', margin: '0 0 16px 0', fontSize: '1.5rem', fontWeight: 800 }}>
+              {isRtl ? 'تم تعليق الحساب' : 'Account Suspended'}
+            </h2>
+            <p style={{ fontSize: '1rem', color: '#ffffff', lineHeight: 1.5, margin: '0 0 24px 0' }}>
+              {isRtl 
+                ? `تم تعليق حسابك من قبل الإدارة. السبب: ${suspensionReason || 'مخالفة شروط الخدمة'}`
+                : `Your account has been suspended by administration. Reason: ${suspensionReason || 'Violation of terms of service'}`}
+            </p>
+            <button 
+              style={{
+                backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                color: '#ffffff',
+                padding: '10px 20px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 'bold',
+                fontFamily: 'var(--font-ui)',
+              }}
+              onClick={() => { playSFX('click'); signOut(); }}
+            >
+              {isRtl ? 'تسجيل الخروج' : 'Log Out'}
+            </button>
+          </div>
+        ) : (
+          <div style={{
+            maxWidth: '450px',
+            width: '100%',
+            backgroundColor: 'rgba(11, 13, 26, 0.95)',
+            border: '1px solid rgba(0, 242, 254, 0.2)',
+            borderRadius: '16px',
+            padding: '30px',
+            boxShadow: '0 8px 32px rgba(0, 242, 254, 0.1)',
+            textAlign: 'center',
+          }}>
+            <h2 style={{ color: '#00f2fe', margin: '0 0 16px 0', fontSize: '1.5rem', fontWeight: 800 }}>
+              {isRtl ? 'تم قفل الجهاز' : 'Device Locked'}
+            </h2>
+            {isAppealSubmitted ? (
+              <div>
+                <p style={{ fontSize: '1.05rem', color: '#ffd700', margin: '0 0 24px 0', lineHeight: 1.5 }}>
+                  {isRtl 
+                    ? 'طلبك لنقل ملكية هذا الجهاز قيد المراجعة حالياً من قبل الإدارة.'
+                    : 'Your appeal to transfer ownership of this device is currently pending review by administrators.'}
+                </p>
+                <button 
+                  style={{
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    color: '#ffffff',
+                    padding: '10px 20px',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    fontFamily: 'var(--font-ui)',
+                  }}
+                  onClick={() => { playSFX('click'); signOut(); }}
+                >
+                  {isRtl ? 'تسجيل الخروج' : 'Log Out'}
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleAppealSubmit}>
+                <p style={{ fontSize: '0.95rem', color: '#8a93c0', lineHeight: 1.5, margin: '0 0 20px 0' }}>
+                  {isRtl 
+                    ? 'هذا الجهاز مرتبط بالفعل بحساب مستخدم آخر. لربطه بحسابك الحالي، يرجى تقديم طلب نقل الملكية.'
+                    : 'This device is already associated with another user account. To bind it to your current account, please submit a transfer appeal.'}
+                </p>
+                <textarea
+                  style={{
+                    width: '100%',
+                    height: '100px',
+                    backgroundColor: 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: '8px',
+                    color: '#ffffff',
+                    padding: '12px',
+                    fontSize: '0.9rem',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                    resize: 'none',
+                    marginBottom: '16px',
+                    fontFamily: 'var(--font-ui)',
+                  }}
+                  placeholder={isRtl ? 'اشرح سبب رغبتك في نقل ملكية هذا الجهاز...' : 'Explain why you want to transfer ownership of this device...'}
+                  value={appealReason}
+                  onChange={(e) => setAppealReason(e.target.value)}
+                  required
+                />
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button 
+                    type="button"
+                    style={{
+                      flex: 1,
+                      backgroundColor: 'transparent',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      color: '#8a93c0',
+                      padding: '10px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontFamily: 'var(--font-ui)',
+                    }}
+                    onClick={() => { playSFX('click'); signOut(); }}
+                  >
+                    {isRtl ? 'تسجيل الخروج' : 'Log Out'}
+                  </button>
+                  <button 
+                    type="submit"
+                    style={{
+                      flex: 1,
+                      backgroundColor: 'rgba(0, 242, 254, 0.12)',
+                      border: '1px solid #00f2fe',
+                      color: '#ffffff',
+                      padding: '10px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontWeight: 'bold',
+                      fontFamily: 'var(--font-ui)',
+                    }}
+                  >
+                    {isRtl ? 'تقديم الطلب' : 'Submit Appeal'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div style={styles.appContainer} dir={isRtl ? 'rtl' : 'ltr'}>
       <div style={styles.arenaFrame}>
@@ -5339,6 +5632,15 @@ export default function ClientPage() {
                       >
                         🛒
                       </button>
+                      {user.isAdmin && (
+                        <button 
+                          style={styles.shopBtn} 
+                          onClick={() => { playSFX('click'); setIsAdminModalOpen(true); }}
+                          title={isRtl ? 'لوحة تحكم الإدارة' : 'Admin Moderation Dashboard'}
+                        >
+                          🛡️
+                        </button>
+                      )}
                       <button 
                         style={styles.shopBtn} 
                         onClick={() => { playSFX('click'); setIsSettingsOpen(true); }}
@@ -6830,7 +7132,7 @@ export default function ClientPage() {
 
                 {gameQuestions[currentQIndex].imageUrl && (
                   <div style={styles.questionImageFrame}>
-                    <img src={gameQuestions[currentQIndex].imageUrl} alt="Question Graphic" style={styles.questionImage} />
+                    <img src={getAssetUrl(gameQuestions[currentQIndex].imageUrl)} alt="Question Graphic" style={styles.questionImage} />
                   </div>
                 )}
               </div>
@@ -8092,7 +8394,7 @@ Play MindRace and test your knowledge now! 🧠⚡`;
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', zIndex: 2 }}>
                               {mvpPlayer.avatarUrl ? (
                                 <img 
-                                  src={mvpPlayer.avatarUrl} 
+                                  src={getAssetUrl(mvpPlayer.avatarUrl)} 
                                   alt={mvpPlayer.username} 
                                   style={{ width: '48px', height: '48px', borderRadius: '50%', border: '2px solid #ffd700', objectFit: 'cover' }} 
                                 />
@@ -9173,6 +9475,14 @@ Play MindRace and test your knowledge now! 🧠⚡`;
           setSfxVolume={setSfxVolume}
           isRtl={isRtl}
           setIsRtl={setIsRtl}
+          playSFX={playSFX}
+        />
+
+        {/* ADMIN MODERATION MODAL */}
+        <AdminModerationModal
+          isOpen={isAdminModalOpen}
+          onClose={() => setIsAdminModalOpen(false)}
+          isRtl={isRtl}
           playSFX={playSFX}
         />
 
