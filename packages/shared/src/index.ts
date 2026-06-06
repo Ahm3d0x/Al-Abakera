@@ -40,6 +40,14 @@ export interface User {
   stats: UserStats;
   avatarUrl: string | null;
   badges: string[];
+  inventory?: string[];
+  equipped?: {
+    border: string | null;
+    effect: string | null;
+    avatar: string | null;
+  };
+  quests?: any;
+  claimedSeasonRewards?: string[];
   createdAt: Date;
   updatedAt: Date;
 }

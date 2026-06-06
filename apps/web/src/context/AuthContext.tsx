@@ -40,6 +40,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (data) {
+        // Fetch user's earned badges
+        const { data: earnedData, error: earnedErr } = await supabase
+          .from('badges_earned')
+          .select('badge_id, badges (key)')
+          .eq('user_id', sUser.id);
+
+        interface EarnedBadgeRow {
+          badge_id: string;
+          badges: { key: string } | { key: string }[] | null;
+        }
+
+        const earnedBadges = earnedErr ? [] : (earnedData as unknown as EarnedBadgeRow[] || []).map((e) => {
+          if (!e.badges) return null;
+          if (Array.isArray(e.badges)) return e.badges[0]?.key;
+          return e.badges.key;
+        }).filter((key): key is string => !!key);
+
         // Map database snake_case fields to packages/shared camelCase fields
         const mappedUser: User = {
           id: data.id,
@@ -51,7 +68,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           creatorTokens: data.creator_tokens,
           stats: (data.stats || {}) as UserStats,
           avatarUrl: data.avatar_url,
-          badges: [], // Can be populated if needed, or fetched separately
+          badges: earnedBadges,
+          inventory: data.inventory || [],
+          equipped: data.equipped || { border: null, effect: null, avatar: null },
+          quests: data.quests || {},
+          claimedSeasonRewards: data.claimed_season_rewards || [],
           createdAt: new Date(data.created_at),
           updatedAt: new Date(data.updated_at),
         };

@@ -11,6 +11,9 @@ import questionsRouter from './routes/questions';
 import roomsRouter from './routes/rooms';
 import tournamentsRouter, { handleTournamentMatchCompletion } from './routes/tournaments';
 import packsRouter from './routes/packs';
+import storeRouter from './routes/store';
+import questsRouter from './routes/quests';
+import seasonsRouter from './routes/seasons';
 
 
 // Load environment variables
@@ -97,6 +100,25 @@ app.use('/api/v1/questions', questionsRouter);
 app.use('/api/v1/rooms', roomsRouter);
 app.use('/api/v1/tournaments', tournamentsRouter);
 app.use('/api/v1/packs', packsRouter);
+app.use('/api/v1/store', storeRouter);
+app.use('/api/v1/quests', questsRouter);
+app.use('/api/v1/seasons', seasonsRouter);
+
+// Admin Route: Apply rank decay rules to inactive players (Master and above)
+app.post('/api/v1/admin/apply-decay', async (req, res) => {
+  try {
+    const { error } = await supabaseAdmin.rpc('apply_rank_decay');
+    if (error) {
+      console.error('[Admin] Rank decay error:', error);
+      return res.status(500).json({ status: 'error', message: error.message });
+    }
+    console.log('[Admin] Rank decay executed successfully');
+    res.json({ status: 'success', message: 'Rank decay executed successfully.' });
+  } catch (err: any) {
+    console.error('[Admin] Rank decay exception:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 
 // Create HTTP server and initialize socket.io
 const httpServer = createServer(app);
@@ -128,6 +150,13 @@ interface ActiveMatch {
   timerInterval: NodeJS.Timeout | null;
   audienceScores?: { [userId: string]: { username: string; score: number } };
   audienceAnswers?: { [roundIndex: number]: { [userId: string]: boolean } };
+  votes?: {
+    [category: string]: {
+      [voterId: string]: string;
+    };
+  };
+  votingDurationLeft?: number;
+  votingInterval?: NodeJS.Timeout | null;
 }
 
 const activeMatches = new Map<string, ActiveMatch>();
@@ -360,6 +389,87 @@ async function endRound(roomId: string, userId: string | null, isCorrect: boolea
   }, 4000);
 }
 
+async function concludeVoting(roomId: string) {
+  const match = activeMatches.get(roomId);
+  if (!match) return;
+
+  if (match.votingInterval) {
+    clearInterval(match.votingInterval);
+    match.votingInterval = null;
+  }
+
+  // Tally votes
+  const tally = (category: string) => {
+    const catVotes = match.votes?.[category] || {};
+    const counts: Record<string, number> = {};
+    for (const candidateId of Object.values(catVotes)) {
+      counts[candidateId] = (counts[candidateId] || 0) + 1;
+    }
+    return counts;
+  };
+
+  const getWinner = (counts: Record<string, number>, list: any[]) => {
+    let max = -1;
+    let winnerId: string | null = null;
+    for (const [candId, val] of Object.entries(counts)) {
+      if (val > max) {
+        max = val;
+        winnerId = candId;
+      }
+    }
+    // Fallback if no votes or tie
+    if (!winnerId && list && list.length > 0) {
+      const rand = list[Math.floor(Math.random() * list.length)];
+      winnerId = typeof rand === 'string' ? rand : rand.id;
+    }
+    return winnerId;
+  };
+
+  const bpCounts = tally('best_player');
+  const btCounts = tally('best_team');
+  const baCounts = tally('best_answer');
+
+  try {
+    const { data: participants } = await supabaseAdmin
+      .from('room_participants')
+      .select(`
+        user_id,
+        is_spectator,
+        profiles (
+          username
+        )
+      `)
+      .eq('room_id', roomId);
+
+    const playersList = (participants || [])
+      .filter((p: any) => !p.is_spectator)
+      .map((p: any) => ({
+        id: p.user_id,
+        username: p.profiles?.username || 'Player'
+      }));
+
+    const bpWinnerId = getWinner(bpCounts, playersList);
+    const btWinnerId = getWinner(btCounts, ['team_a', 'team_b']);
+    const baWinnerId = getWinner(baCounts, playersList);
+
+    const bpName = playersList.find((p: any) => p.id === bpWinnerId)?.username || null;
+    const btName = btWinnerId === 'team_a' ? 'Team A' : btWinnerId === 'team_b' ? 'Team B' : null;
+    const baName = playersList.find((p: any) => p.id === baWinnerId)?.username || null;
+
+    console.log(`[Socket] Voting Concluded for room ${roomId}: MVP=${bpName}, BestTeam=${btName}, BestAns=${baName}`);
+
+    io.to(roomId).emit('game:voting_results', {
+      bestPlayer: bpName,
+      bestTeam: btName,
+      bestAnswer: baName
+    });
+  } catch (err) {
+    console.error('Error concluding voting:', err);
+  }
+
+  activeMatches.delete(roomId);
+}
+
 async function endMatch(roomId: string) {
   const match = activeMatches.get(roomId);
   if (!match) return;
@@ -417,7 +527,73 @@ async function endMatch(roomId: string) {
   // Handle tournament match completion progression
   await handleTournamentMatchCompletion(roomId, winnerId);
 
-  activeMatches.delete(roomId);
+  // Initialize and start post-match voting phase
+  try {
+    const { data: roomInfo } = await supabaseAdmin
+      .from('rooms')
+      .select('config')
+      .eq('id', roomId)
+      .maybeSingle();
+
+    const { data: participants } = await supabaseAdmin
+      .from('room_participants')
+      .select(`
+        user_id,
+        is_spectator,
+        profiles (
+          username
+        )
+      `)
+      .eq('room_id', roomId);
+
+    const playersList = (participants || [])
+      .filter((p: any) => !p.is_spectator)
+      .map((p: any) => ({
+        id: p.user_id,
+        username: p.profiles?.username || 'Player'
+      }));
+
+    const isTeamMode = roomInfo?.config?.mode === 'TEAM_BATTLE';
+
+    const candidates = {
+      bestPlayer: playersList,
+      bestTeam: isTeamMode ? ['team_a', 'team_b'] : undefined,
+      bestAnswer: isTeamMode ? playersList : undefined
+    };
+
+    match.votes = {
+      best_player: {},
+      best_team: {},
+      best_answer: {}
+    };
+
+    match.votingDurationLeft = 20;
+
+    console.log(`[Socket] Starting post-match voting for room ${roomId}`);
+
+    io.to(roomId).emit('game:voting_start', {
+      candidates,
+      timeLeft: match.votingDurationLeft
+    });
+
+    match.votingInterval = setInterval(async () => {
+      if (!activeMatches.has(roomId)) {
+        clearInterval(match.votingInterval!);
+        return;
+      }
+      match.votingDurationLeft!--;
+      io.to(roomId).emit('game:voting_tick', { timeLeft: match.votingDurationLeft });
+
+      if (match.votingDurationLeft! <= 0) {
+        clearInterval(match.votingInterval!);
+        await concludeVoting(roomId);
+      }
+    }, 1000);
+
+  } catch (err) {
+    console.error('Error starting voting phase:', err);
+    activeMatches.delete(roomId);
+  }
 }
 
 // ==========================================
@@ -746,11 +922,26 @@ io.on('connection', (socket) => {
         }
 
         if (!dbQs || dbQs.length === 0) {
-          const { data } = await supabaseAdmin
-            .from('questions')
-            .select('*')
-            .limit(roundsLimit);
-          dbQs = data;
+          // Fetch current active season to see if we should prioritize/include seasonal questions
+          const { data: activeSeason } = await supabaseAdmin
+            .from('seasons')
+            .select('id')
+            .eq('is_active', true)
+            .maybeSingle();
+
+          let query = supabaseAdmin.from('questions').select('*');
+          if (activeSeason) {
+            query = query.or(`season_id.eq.${activeSeason.id},season_id.is.null`);
+          }
+
+          // Fetch a pool of up to 40 questions, shuffle them to keep matches varied
+          const { data: pool } = await query.limit(40);
+          if (pool && pool.length >= roundsLimit) {
+            const shuffled = [...pool].sort(() => Math.random() - 0.5);
+            dbQs = shuffled.slice(0, roundsLimit);
+          } else {
+            dbQs = pool;
+          }
         }
 
         // Fallback to sample questions set if database has insufficient items
@@ -950,6 +1141,55 @@ io.on('connection', (socket) => {
       });
     } catch (err) {
       console.error('[Socket] Error grading audience answer:', err);
+    }
+  });
+
+  socket.on('game:submit_vote', async ({ roomId, category, candidateId }) => {
+    if (!roomId || !category || !candidateId) return;
+    if (!userId) return;
+
+    const match = activeMatches.get(roomId);
+    if (!match || !match.votes) return;
+
+    // Security check: cannot vote for self in best_player and best_answer categories
+    if ((category === 'best_player' || category === 'best_answer') && candidateId === userId) {
+      console.warn(`[Socket] Player ${userId} attempted to self-vote for category ${category}`);
+      return;
+    }
+
+    // Register vote
+    if (!match.votes[category]) {
+      match.votes[category] = {};
+    }
+    match.votes[category][userId] = candidateId;
+
+    // Tally votes for this category to broadcast live results
+    const counts: Record<string, number> = {};
+    for (const candId of Object.values(match.votes[category])) {
+      counts[candId] = (counts[candId] || 0) + 1;
+    }
+
+    // Broadcast live update
+    io.to(roomId).emit('game:vote_update', {
+      category,
+      votes: counts
+    });
+
+    // Check if all active players have voted for all categories (so we can conclude immediately)
+    const activePlayerIds = Object.keys(match.scores);
+    
+    // Check if everyone voted
+    const allHaveVoted = activePlayerIds.every(id => {
+      const votedBP = match.votes?.best_player?.[id] !== undefined;
+      const hasTeam = match.votes?.best_team !== undefined;
+      const votedBT = !hasTeam || match.votes?.best_team?.[id] !== undefined;
+      const votedBA = !hasTeam || match.votes?.best_answer?.[id] !== undefined;
+      return votedBP && votedBT && votedBA;
+    });
+
+    if (allHaveVoted) {
+      console.log(`[Socket] All active players voted in room ${roomId}. Concluding voting early.`);
+      await concludeVoting(roomId);
     }
   });
 

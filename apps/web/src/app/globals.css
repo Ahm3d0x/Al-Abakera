@@ -363,3 +363,96 @@ body[dir="rtl"] .glass-table td:last-child {
   border: 2px solid transparent;
 }
 
+/* Custom Equipped Avatar Borders & Animations */
+@keyframes gold-halo-spin {
+  0% { transform: rotate(0deg); box-shadow: 0 0 10px rgba(255, 215, 0, 0.5); }
+  50% { box-shadow: 0 0 20px rgba(255, 215, 0, 0.9); }
+  100% { transform: rotate(360deg); box-shadow: 0 0 10px rgba(255, 215, 0, 0.5); }
+}
+@keyframes dark-matter-pulse {
+  0% { transform: scale(1); box-shadow: 0 0 8px rgba(139, 92, 246, 0.4); }
+  100% { transform: scale(1.06); box-shadow: 0 0 20px rgba(139, 92, 246, 0.8), 0 0 30px rgba(139, 92, 246, 0.4); }
+}
+
+/* Correct Answer Celebration Visual Effects */
+.laser-sweep-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 10;
+}
+.laser-line {
+  position: absolute;
+  top: -10px;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  background: #00f2fe;
+  box-shadow: 0 0 15px #00f2fe, 0 0 30px #00f2fe;
+  animation: laser-sweep 1.8s ease-in-out infinite;
+}
+@keyframes laser-sweep {
+  0% { top: 0%; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+.fireworks-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 10;
+}
+.sparkle-particle {
+  position: absolute;
+  bottom: 0;
+  border-radius: 50%;
+  opacity: 0;
+  animation: sparkle-shoot 2s ease-out infinite;
+}
+@keyframes sparkle-shoot {
+  0% { transform: translateY(0) scale(1) rotate(0deg); opacity: 1; bottom: 0%; }
+  50% { opacity: 1; }
+  100% { transform: translateY(-300px) scale(0.2) rotate(360deg); opacity: 0; bottom: 80%; }
+}
+
+.matrix-rain-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 10;
+  background: rgba(0, 0, 0, 0.15);
+}
+.matrix-column {
+  position: absolute;
+  top: -200px;
+  color: #00ff87;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.1;
+  white-space: pre;
+  opacity: 0;
+  animation: matrix-fall 2.5s linear infinite;
+  text-shadow: 0 0 5px #00ff87;
+}
+@keyframes matrix-fall {
+  0% { top: -200px; opacity: 0; }
+  10% { opacity: 0.8; }
+  90% { opacity: 0.8; }
+  100% { top: 100%; opacity: 0; }
+}
+
+

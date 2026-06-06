@@ -235,7 +235,6 @@ Mind Race is a multi-mode knowledge competition platform supporting solo trainin
 ## Phase 5 — Progression, Economy & Seasons
 
 **Goal:** Add long-term engagement through ranks, rewards, currencies, and seasonal content.
-**Estimated Duration:**
 
 ### 5.1 Ranking System
 
@@ -290,23 +289,13 @@ Mind Race is a multi-mode knowledge competition platform supporting solo trainin
 
 ---
 
-## Phase 6 — Polish, Audio, Animations & Launch Readiness
+### 5.5 Seasons
 
-**Goal:** Deliver a complete, polished product ready for public launch.
-**Estimated Duration:**
-
-### 6.1 Animations
-
-- [ ] Animated countdown timer
-- [ ] Screen shake on wrong answer
-- [ ] Glow/flash effect on correct answer
-- [ ] Points explosion animation
-- [ ] Round transition animation
-- [ ] Live progress bar
-- [ ] Rank-up animation
-- [ ] Win celebration animation
-- [ ] Badge unlock animation
-- [ ] Power-up activation animation
+- [ ] Implement season framework (start date, end date, theme)
+- [ ] Introduce new questions each season
+- [ ] Award season-exclusive badges and cosmetics
+- [ ] Archive previous season rankings and rewards
+- [ ] Build season progress tracker UI
 
 ### 6.2 Sound Effects
 
@@ -362,12 +351,3 @@ Mind Race is a multi-mode knowledge competition platform supporting solo trainin
 - [ ] Prepare app store listings (iOS / Android) if applicable
 - [ ] Set up production monitoring and alerts
 - [ ] Soft launch with limited users → gather feedback → full launch
-
----
-
-## Key Dependencies
-
-- Phase 2 must complete before Phase 3 (game engine before multiplayer)
-- Phase 3 must complete before Phase 4 (real-time before tournaments)
-- Phase 5 can begin in parallel with Phase 4
-- Phase 6 runs in parallel with final testing of Phase 5

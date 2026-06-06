@@ -7,6 +7,12 @@ import { useAuth } from '../context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase';
 import { io, Socket } from 'socket.io-client';
+import { RankBadge } from '../components/RankBadge';
+import { PlayerProfileModal, BADGES_METADATA } from '../components/PlayerProfileModal';
+import { CosmeticShopModal } from '../components/CosmeticShopModal';
+import { QuestsPanel } from '../components/QuestsPanel';
+import { SeasonTrackerPanel } from '../components/SeasonTrackerPanel';
+import { SettingsModal } from '../components/SettingsModal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:5000';
@@ -14,61 +20,316 @@ const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:5000'
 // ==========================================
 // Web Audio API Sound Generator (No external assets required!)
 // ==========================================
-const playSFX = (type: 'correct' | 'wrong' | 'buzz' | 'tick' | 'slam' | 'click') => {
-  if (typeof window === 'undefined') return;
+// Global audio settings object updated by the ClientPage component
+const audioSettings = {
+  enabled: true,
+  volume: 0.7
+};
+
+// Track active audio sources to allow stopping long-running sounds
+let activeAudioSources: { ctx: AudioContext; osc: OscillatorNode; gain: GainNode }[] = [];
+
+const stopAllAudio = () => {
+  activeAudioSources.forEach(src => {
+    try {
+      src.osc.stop();
+      src.osc.disconnect();
+      src.gain.disconnect();
+      src.ctx.close();
+    } catch (e) {}
+  });
+  activeAudioSources = [];
+};
+
+const playSFX = (type: string) => {
+  if (typeof window === 'undefined' || !audioSettings.enabled) return;
   try {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const AudioContextClass = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextClass) return;
+
+    const ctx = new AudioContextClass();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(ctx.destination);
 
-    if (type === 'correct') {
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
-      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.3); // A5
-      gain.gain.setValueAtTime(0.12, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.35);
-    } else if (type === 'wrong') {
+    if (type === 'correct' || type === 'correct_chime') {
+      ctx.close(); // Close unused base context
+      const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+      notes.forEach((freq, idx) => {
+        setTimeout(() => {
+          if (!audioSettings.enabled) return;
+          try {
+            const noteCtx = new AudioContextClass();
+            const noteOsc = noteCtx.createOscillator();
+            const noteGain = noteCtx.createGain();
+            noteOsc.connect(noteGain);
+            noteGain.connect(noteCtx.destination);
+
+            noteOsc.type = 'triangle';
+            noteOsc.frequency.setValueAtTime(freq, noteCtx.currentTime);
+            noteGain.gain.setValueAtTime(0.12 * audioSettings.volume, noteCtx.currentTime);
+            noteGain.gain.exponentialRampToValueAtTime(0.01, noteCtx.currentTime + 0.4);
+            noteOsc.start();
+            noteOsc.stop(noteCtx.currentTime + 0.45);
+            
+            activeAudioSources.push({ ctx: noteCtx, osc: noteOsc, gain: noteGain });
+            setTimeout(() => {
+              noteCtx.close();
+            }, 500);
+          } catch (e) {}
+        }, idx * 100);
+      });
+    } else if (type === 'wrong' || type === 'wrong_buzz') {
+      const osc2 = ctx.createOscillator();
+      osc2.connect(gain);
+
       osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(140, ctx.currentTime);
-      osc.frequency.linearRampToValueAtTime(70, ctx.currentTime + 0.4);
-      gain.gain.setValueAtTime(0.15, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+      osc.frequency.setValueAtTime(135, ctx.currentTime);
+      osc.frequency.linearRampToValueAtTime(65, ctx.currentTime + 0.5);
+
+      osc2.type = 'square';
+      osc2.frequency.setValueAtTime(130, ctx.currentTime);
+      osc2.frequency.linearRampToValueAtTime(60, ctx.currentTime + 0.5);
+
+      gain.gain.setValueAtTime(0.2 * audioSettings.volume, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+
       osc.start();
-      osc.stop(ctx.currentTime + 0.45);
-    } else if (type === 'buzz') {
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(293.66, ctx.currentTime); // D4
-      osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.2); // A4
-      gain.gain.setValueAtTime(0.25, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
+      osc2.start();
+      osc.stop(ctx.currentTime + 0.55);
+      osc2.stop(ctx.currentTime + 0.55);
+      
+      activeAudioSources.push({ ctx, osc, gain });
+      setTimeout(() => ctx.close(), 600);
+    } else if (type === 'buzz' || type === 'buzzer_press') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(280, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(560, ctx.currentTime + 0.15);
+      gain.gain.setValueAtTime(0.25 * audioSettings.volume, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.18);
       osc.start();
-      osc.stop(ctx.currentTime + 0.3);
-    } else if (type === 'tick') {
+      osc.stop(ctx.currentTime + 0.2);
+
+      activeAudioSources.push({ ctx, osc, gain });
+      setTimeout(() => ctx.close(), 250);
+    } else if (type === 'tick' || type === 'countdown_tick') {
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(1000, ctx.currentTime);
-      gain.gain.setValueAtTime(0.03, ctx.currentTime);
+      osc.frequency.setValueAtTime(900, ctx.currentTime);
+      gain.gain.setValueAtTime(0.04 * audioSettings.volume, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
       osc.start();
       osc.stop(ctx.currentTime + 0.06);
+      
+      setTimeout(() => ctx.close(), 100);
+    } else if (type === 'final_beep') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1400, ctx.currentTime);
+      gain.gain.setValueAtTime(0.15 * audioSettings.volume, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.28);
+
+      activeAudioSources.push({ ctx, osc, gain });
+      setTimeout(() => ctx.close(), 350);
+    } else if (type === 'round_start') {
+      ctx.close();
+      const notes = [261.63, 392.00, 523.25, 659.25, 783.99]; // C4, G4, C5, E5, G5
+      notes.forEach((freq, idx) => {
+        setTimeout(() => {
+          if (!audioSettings.enabled) return;
+          try {
+            const fCtx = new AudioContextClass();
+            const fOsc = fCtx.createOscillator();
+            const fGain = fCtx.createGain();
+            fOsc.connect(fGain);
+            fGain.connect(fCtx.destination);
+
+            fOsc.type = 'triangle';
+            fOsc.frequency.setValueAtTime(freq, fCtx.currentTime);
+            fGain.gain.setValueAtTime(0.12 * audioSettings.volume, fCtx.currentTime);
+            fGain.gain.exponentialRampToValueAtTime(0.01, fCtx.currentTime + 0.5);
+            fOsc.start();
+            fOsc.stop(fCtx.currentTime + 0.55);
+
+            activeAudioSources.push({ ctx: fCtx, osc: fOsc, gain: fGain });
+            setTimeout(() => fCtx.close(), 650);
+          } catch (e) {}
+        }, idx * 80);
+      });
+    } else if (type === 'round_end') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(420, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(110, ctx.currentTime + 0.5);
+      gain.gain.setValueAtTime(0.12 * audioSettings.volume, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.55);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.6);
+
+      activeAudioSources.push({ ctx, osc, gain });
+      setTimeout(() => ctx.close(), 700);
+    } else if (type === 'victory_music') {
+      ctx.close();
+      const arpeggio = [261.63, 329.63, 392.00, 523.25, 659.25, 783.99, 1046.50];
+      let noteIdx = 0;
+      const interval = setInterval(() => {
+        if (!audioSettings.enabled || noteIdx >= 16) {
+          clearInterval(interval);
+          return;
+        }
+        try {
+          const vCtx = new AudioContextClass();
+          const vOsc = vCtx.createOscillator();
+          const vGain = vCtx.createGain();
+          vOsc.connect(vGain);
+          vGain.connect(vCtx.destination);
+
+          const freq = arpeggio[noteIdx % arpeggio.length] * (Math.floor(noteIdx / arpeggio.length) + 1);
+          vOsc.type = 'sine';
+          vOsc.frequency.setValueAtTime(freq, vCtx.currentTime);
+          vGain.gain.setValueAtTime(0.1 * audioSettings.volume, vCtx.currentTime);
+          vGain.gain.exponentialRampToValueAtTime(0.01, vCtx.currentTime + 0.3);
+          vOsc.start();
+          vOsc.stop(vCtx.currentTime + 0.35);
+
+          activeAudioSources.push({ ctx: vCtx, osc: vOsc, gain: vGain });
+          setTimeout(() => vCtx.close(), 400);
+        } catch (e) {}
+        noteIdx++;
+      }, 150);
+    } else if (type === 'defeat_sound') {
+      ctx.close();
+      const notes = [392.00, 349.23, 311.13, 261.63]; // G4, F4, Eb4, C4
+      notes.forEach((freq, idx) => {
+        setTimeout(() => {
+          if (!audioSettings.enabled) return;
+          try {
+            const dCtx = new AudioContextClass();
+            const dOsc = dCtx.createOscillator();
+            const dGain = dCtx.createGain();
+            dOsc.connect(dGain);
+            dGain.connect(dCtx.destination);
+
+            dOsc.type = 'sawtooth';
+            dOsc.frequency.setValueAtTime(freq, dCtx.currentTime);
+            dGain.gain.setValueAtTime(0.12 * audioSettings.volume, dCtx.currentTime);
+            dGain.gain.exponentialRampToValueAtTime(0.01, dCtx.currentTime + 0.7);
+            dOsc.start();
+            dOsc.stop(dCtx.currentTime + 0.75);
+
+            activeAudioSources.push({ ctx: dCtx, osc: dOsc, gain: dGain });
+            setTimeout(() => dCtx.close(), 900);
+          } catch (e) {}
+        }, idx * 250);
+      });
+    } else if (type === 'power_up') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(180, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1400, ctx.currentTime + 0.75);
+      
+      const oscMod = ctx.createOscillator();
+      const modGain = ctx.createGain();
+      oscMod.connect(modGain);
+      modGain.connect(osc.frequency);
+      oscMod.frequency.setValueAtTime(45, ctx.currentTime);
+      modGain.gain.setValueAtTime(150, ctx.currentTime);
+
+      gain.gain.setValueAtTime(0.15 * audioSettings.volume, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.75);
+
+      osc.start();
+      oscMod.start();
+      osc.stop(ctx.currentTime + 0.8);
+      oscMod.stop(ctx.currentTime + 0.8);
+
+      activeAudioSources.push({ ctx, osc, gain });
+      setTimeout(() => ctx.close(), 900);
+    } else if (type === 'tournament_intro') {
+      const droneOsc = ctx.createOscillator();
+      const subOsc = ctx.createOscillator();
+      droneOsc.connect(gain);
+      subOsc.connect(gain);
+
+      droneOsc.type = 'sawtooth';
+      droneOsc.frequency.setValueAtTime(80, ctx.currentTime);
+      droneOsc.frequency.linearRampToValueAtTime(160, ctx.currentTime + 2.5);
+
+      subOsc.type = 'sine';
+      subOsc.frequency.setValueAtTime(40, ctx.currentTime);
+      subOsc.frequency.linearRampToValueAtTime(80, ctx.currentTime + 2.5);
+
+      gain.gain.setValueAtTime(0.25 * audioSettings.volume, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 2.8);
+
+      droneOsc.start();
+      subOsc.start();
+      droneOsc.stop(ctx.currentTime + 2.9);
+      subOsc.stop(ctx.currentTime + 2.9);
+
+      activeAudioSources.push({ ctx, osc: droneOsc, gain });
+      setTimeout(() => ctx.close(), 3000);
+    } else if (type === 'audience_cheer') {
+      const bufferSize = ctx.sampleRate * 2.0;
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const output = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        output[i] = Math.random() * 2 - 1;
+      }
+
+      const whiteNoise = ctx.createBufferSource();
+      whiteNoise.buffer = buffer;
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 1000;
+      filter.Q.value = 1.0;
+
+      whiteNoise.connect(filter);
+      filter.connect(gain);
+
+      gain.gain.setValueAtTime(0.01, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.25 * audioSettings.volume, ctx.currentTime + 0.3);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.95);
+
+      whiteNoise.start();
+      whiteNoise.stop(ctx.currentTime + 2.0);
+
+      activeAudioSources.push({ ctx, osc: whiteNoise as unknown as OscillatorNode, gain });
+      setTimeout(() => ctx.close(), 2100);
+    } else if (type === 'sudden_death') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(600, ctx.currentTime);
+      osc.frequency.linearRampToValueAtTime(900, ctx.currentTime + 0.35);
+      
+      gain.gain.setValueAtTime(0.18 * audioSettings.volume, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.01, ctx.currentTime + 0.38);
+
+      osc.start();
+      osc.stop(ctx.currentTime + 0.4);
+
+      activeAudioSources.push({ ctx, osc, gain });
+      setTimeout(() => ctx.close(), 450);
     } else if (type === 'slam') {
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(90, ctx.currentTime);
       osc.frequency.exponentialRampToValueAtTime(30, ctx.currentTime + 0.6);
-      gain.gain.setValueAtTime(0.35, ctx.currentTime);
+      gain.gain.setValueAtTime(0.35 * audioSettings.volume, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.65);
       osc.start();
       osc.stop(ctx.currentTime + 0.7);
+
+      activeAudioSources.push({ ctx, osc, gain });
+      setTimeout(() => ctx.close(), 750);
     } else if (type === 'click') {
       osc.type = 'sine';
       osc.frequency.setValueAtTime(600, ctx.currentTime);
-      gain.gain.setValueAtTime(0.05, ctx.currentTime);
+      gain.gain.setValueAtTime(0.05 * audioSettings.volume, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.08);
       osc.start();
       osc.stop(ctx.currentTime + 0.1);
+
+      activeAudioSources.push({ ctx, osc, gain });
+      setTimeout(() => ctx.close(), 150);
     }
   } catch (e) {
     console.log('Audio error:', e);
@@ -293,17 +554,226 @@ const SAMPLE_QUESTIONS: Question[] = [
   }
 ];
 
+// ==========================================
+// Correct Answer Celebration Effect Component
+// ==========================================
+const AnswerEffectCelebration: React.FC<{ effectKey: string | null | undefined }> = ({ effectKey }) => {
+  if (!effectKey) return null;
+
+  if (effectKey === 'laser_strike') {
+    return (
+      <div className="laser-sweep-overlay" id="effect-laser-strike">
+        <div className="laser-line" />
+      </div>
+    );
+  }
+
+  if (effectKey === 'firework') {
+    return (
+      <div className="fireworks-overlay" id="effect-firework">
+        {Array.from({ length: 24 }).map((_, i) => {
+          const left = (i * 17) % 100;
+          const delay = (i * 0.13) % 1.5;
+          const size = ((i * 3) % 8) + 4;
+          const rotation = (i * 47) % 360;
+          const bgColors = ['#ffd700', '#ff007f', '#00f2fe', '#00ff87', '#ffb300'];
+          const bgColor = bgColors[i % 5];
+          return (
+            <span 
+              key={i} 
+              className="sparkle-particle" 
+              style={{
+                left: `${left}%`,
+                animationDelay: `${delay}s`,
+                backgroundColor: bgColor,
+                width: `${size}px`,
+                height: `${size}px`,
+                transform: `rotate(${rotation}deg)`
+              }}
+            />
+          );
+        })}
+      </div>
+    );
+  }
+
+  if (effectKey === 'matrix_rain') {
+    return (
+      <div className="matrix-rain-overlay" id="effect-matrix-rain">
+        {Array.from({ length: 15 }).map((_, col) => {
+          const delay = (col * 0.23) % 2;
+          const duration = 2 + ((col * 0.37) % 3);
+          const characters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ$#@%&";
+          const randomText = Array.from({ length: 15 }, (_, i) => {
+            const charIdx = (col * 7 + i * 13) % characters.length;
+            return characters[charIdx];
+          }).join('\n');
+
+          return (
+            <div 
+              key={col} 
+              className="matrix-column" 
+              style={{
+                left: `${col * 7}%`,
+                animationDelay: `${delay}s`,
+                animationDuration: `${duration}s`
+              }}
+            >
+              {randomText}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return null;
+};
+
 export default function ClientPage() {
   const { user, loading, signOut, refreshProfile } = useAuth();
   const router = useRouter();
 
-  // Navigation and Layout states
   const [isRtl, setIsRtl] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [activeSeason, setActiveSeason] = useState<any>(null);
+  const [daysRemaining, setDaysRemaining] = useState<number>(0);
+
+  // Audio settings states
+  const [sfxEnabled, setSfxEnabled] = useState<boolean>(true);
+  const [sfxVolume, setSfxVolume] = useState<number>(0.7);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isTournamentMatch, setIsTournamentMatch] = useState<boolean>(false);
+  const [matchStartRP, setMatchStartRP] = useState<number>(0);
+  const [matchStartBadges, setMatchStartBadges] = useState<string[]>([]);
+  const [progressWidth, setProgressWidth] = useState<number>(0);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const storedSfxEnabled = window.localStorage.getItem('mindrace_sfx_enabled');
+      if (storedSfxEnabled !== null) {
+        const enabled = storedSfxEnabled === 'true';
+        setSfxEnabled(enabled);
+        audioSettings.enabled = enabled;
+      }
+      const storedSfxVolume = window.localStorage.getItem('mindrace_sfx_volume');
+      if (storedSfxVolume !== null) {
+        const vol = parseFloat(storedSfxVolume);
+        setSfxVolume(vol);
+        audioSettings.volume = vol;
+      }
+      const storedRtl = window.localStorage.getItem('mindrace_rtl');
+      if (storedRtl !== null) {
+        setIsRtl(storedRtl === 'true');
+      }
+    }
+  }, [setIsRtl]);
+
+  useEffect(() => {
+    audioSettings.enabled = sfxEnabled;
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('mindrace_sfx_enabled', String(sfxEnabled));
+    }
+  }, [sfxEnabled]);
+
+  useEffect(() => {
+    audioSettings.volume = sfxVolume;
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('mindrace_sfx_volume', String(sfxVolume));
+    }
+  }, [sfxVolume]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('mindrace_rtl', String(isRtl));
+    }
+  }, [isRtl]);
+
+  useEffect(() => {
+    const fetchActiveSeason = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        if (!token) return;
+
+        const res = await fetch(`${API_URL}/api/v1/seasons/active`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.activeSeason) {
+            setActiveSeason(data.activeSeason);
+            setDaysRemaining(data.daysRemaining);
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching active season in ClientPage:', err);
+      }
+    };
+    if (user) {
+      fetchActiveSeason();
+    }
+  }, [user]);
+  const [isShopOpen, setIsShopOpen] = useState(false);
+  const [leaderboardCategory, setLeaderboardCategory] = useState<string>('Global');
+  const [rankUpCelebration, setRankUpCelebration] = useState<{ show: boolean; oldRank: string; newRank: string } | null>(null);
+  const previousRankRef = useRef<string | null>(null);
+  const [unlockedBadge, setUnlockedBadge] = useState<{ show: boolean; key: string } | null>(null);
+  const previousBadgesRef = useRef<string[] | null>(null);
+
+
+
+  // Navigation and Layout states
 
   const getLocalizedText = (textObj: any): string => {
     if (!textObj) return '';
     if (typeof textObj === 'string') return textObj;
     return isRtl ? (textObj.ar || textObj.en || '') : (textObj.en || textObj.ar || '');
+  };
+
+  const getEquippedBorderStyle = (borderKey: string | null | undefined, rank: string): React.CSSProperties => {
+    if (!borderKey) {
+      return {
+        borderColor: `var(--color-${rank.toLowerCase().replace(' ', '')})`,
+        borderStyle: 'solid',
+        borderWidth: '3px'
+      };
+    }
+    switch (borderKey) {
+      case 'cyber_neon':
+        return {
+          border: '4px solid transparent',
+          backgroundImage: 'linear-gradient(rgba(15,18,30,1), rgba(15,18,30,1)), linear-gradient(135deg, #00f2fe 0%, #4facfe 100%)',
+          backgroundOrigin: 'border-box',
+          backgroundClip: 'padding-box, border-box',
+          boxShadow: '0 0 10px rgba(0, 242, 254, 0.6)'
+        };
+      case 'gold_halo':
+        return {
+          border: '4px solid transparent',
+          backgroundImage: 'linear-gradient(rgba(15,18,30,1), rgba(15,18,30,1)), linear-gradient(135deg, #ffd700 0%, #fbbf24 100%)',
+          backgroundOrigin: 'border-box',
+          backgroundClip: 'padding-box, border-box',
+          animation: 'gold-halo-spin 4s linear infinite'
+        };
+      case 'dark_matter':
+        return {
+          border: '4px solid transparent',
+          backgroundImage: 'linear-gradient(rgba(15,18,30,1), rgba(15,18,30,1)), linear-gradient(135deg, #8b5cf6 0%, #090d16 100%)',
+          backgroundOrigin: 'border-box',
+          backgroundClip: 'padding-box, border-box',
+          animation: 'dark-matter-pulse 2s infinite alternate'
+        };
+      default:
+        return {
+          borderColor: `var(--color-${rank.toLowerCase().replace(' ', '')})`,
+          borderStyle: 'solid',
+          borderWidth: '3px'
+        };
+    }
   };
 
   const parseLocalizedInput = (text: string): { ar: string; en: string } => {
@@ -463,6 +933,7 @@ export default function ClientPage() {
     correctAnswer: unknown;
     explanation: string;
     timeSpent: number;
+    powerUpsUsed?: string[];
   }
 
   interface MatchReportData {
@@ -549,6 +1020,21 @@ export default function ClientPage() {
   const [bidValue, setBidValue] = useState(100);
   const [teammateVotes, setTeammateVotes] = useState<{ [optionId: string]: string[] }>({}); // optionId -> usernames
   
+  const [votingActive, setVotingActive] = useState(false);
+  const [votingTimeLeft, setVotingTimeLeft] = useState(20);
+  const [votingCandidates, setVotingCandidates] = useState<{
+    bestPlayer: { id: string; username: string }[];
+    bestTeam?: string[];
+    bestAnswer?: { id: string; username: string }[];
+  } | null>(null);
+  const [myVotes, setMyVotes] = useState<Record<string, string>>({}); // category -> candidateId
+  const [liveVotes, setLiveVotes] = useState<Record<string, Record<string, number>>>({}); // category -> { candidateId: count }
+  const [votingWinners, setVotingWinners] = useState<{
+    bestPlayer: string | null;
+    bestTeam: string | null;
+    bestAnswer: string | null;
+  } | null>(null);
+  
   // Power-Ups states
   const [showStoreModal, setShowStoreModal] = useState(false);
   const [hiddenOptions, setHiddenOptions] = useState<string[]>([]);
@@ -629,8 +1115,19 @@ export default function ClientPage() {
 
     // Game lifecycle events for spectators
     socket.on(GameEvents.START_GAME, () => {
-      playSFX('slam');
+      stopAllAudio();
+      if (isTournamentMatch) {
+        playSFX('tournament_intro');
+      } else {
+        playSFX('slam');
+      }
       triggerVibrate([200, 100, 200]);
+      setVotingActive(false);
+      setVotingWinners(null);
+      setMyVotes({});
+      setLiveVotes({});
+      setMatchStartRP(user?.rankPoints || 0);
+      setMatchStartBadges(user?.badges || []);
       setScreen('cinematic');
     });
 
@@ -684,7 +1181,11 @@ export default function ClientPage() {
             return 0;
           }
           if (prev <= 6) {
-            playSFX('tick');
+            if (prev % 2 === 0) {
+              playSFX('countdown_tick');
+            } else {
+              playSFX('final_beep');
+            }
           }
           return prev - 1;
         });
@@ -714,7 +1215,11 @@ export default function ClientPage() {
             return 0;
           }
           if (prev <= 6) {
-            playSFX('tick');
+            if (prev % 2 === 0) {
+              playSFX('countdown_tick');
+            } else {
+              playSFX('final_beep');
+            }
           }
           return prev - 1;
         });
@@ -790,6 +1295,41 @@ export default function ClientPage() {
         playSFX('wrong');
       }
     });
+
+    socket.on('game:voting_start', (data: { candidates: any; timeLeft: number }) => {
+      console.log('[Socket] Voting Start:', data);
+      setVotingCandidates(data.candidates);
+      setVotingTimeLeft(data.timeLeft);
+      setVotingActive(true);
+      setMyVotes({});
+      setLiveVotes({
+        best_player: {},
+        best_team: {},
+        best_answer: {}
+      });
+      setVotingWinners(null);
+    });
+
+    socket.on('game:voting_tick', (data: { timeLeft: number }) => {
+      setVotingTimeLeft(data.timeLeft);
+      if (data.timeLeft <= 5) {
+        playSFX('tick');
+      }
+    });
+
+    socket.on('game:vote_update', (data: { category: string; votes: Record<string, number> }) => {
+      setLiveVotes((prev) => ({
+        ...prev,
+        [data.category]: data.votes
+      }));
+    });
+
+    socket.on('game:voting_results', (data: { bestPlayer: string | null; bestTeam: string | null; bestAnswer: string | null }) => {
+      console.log('[Socket] Voting Results:', data);
+      setVotingWinners(data);
+      setVotingActive(false);
+      playSFX('correct');
+    });
   };
 
   const submitSpectatorAnswer = (ans: unknown) => {
@@ -823,14 +1363,32 @@ export default function ClientPage() {
         setCurrentRoom((prev: any) => prev ? { ...prev, config } : null);
       },
       onGameStart: () => {
-        playSFX('slam');
+        stopAllAudio();
+        if (isTournamentMatch) {
+          playSFX('tournament_intro');
+        } else {
+          playSFX('slam');
+        }
         triggerVibrate([200, 100, 200]);
+        setVotingActive(false);
+        setVotingWinners(null);
+        setMyVotes({});
+        setLiveVotes({});
+        setMatchStartRP(user?.rankPoints || 0);
+        setMatchStartBadges(user?.badges || []);
         setScreen('cinematic');
       },
       onRoundStart: async (data) => {
         setGameMode(currentRoom?.config?.mode || 'FREE_FOR_ALL');
         activeRoundRef.current = { id: data.roundId, started_at: Date.now() };
         setSubmittedAnswers({});
+
+        const bt = currentRoom?.config?.buzzerType || 'STANDARD';
+        if (bt === 'SUDDEN_DEATH') {
+          playSFX('sudden_death');
+        } else {
+          playSFX('round_start');
+        }
 
         const { data: existingAnswers } = await supabase
           .from('round_answers')
@@ -882,7 +1440,7 @@ export default function ClientPage() {
         setTimeLeft(data.timeLeft);
       },
       onBuzzed: (data) => {
-        playSFX('buzz');
+        playSFX('buzzer_press');
         setIsBuzzed(true);
         setBuzzedUser(data.username);
         if (data.username === user?.username && socketRef.current) {
@@ -898,10 +1456,12 @@ export default function ClientPage() {
         setRevealedCorrectAnswer(data.correctAnswer);
         setAnswerSubmitted(true);
 
+        playSFX('round_end');
+
         if (data.isCorrect) {
-          playSFX('correct');
+          setTimeout(() => playSFX('correct'), 300);
         } else {
-          playSFX('wrong');
+          setTimeout(() => playSFX('wrong'), 300);
         }
 
         if (data.scores) {
@@ -914,8 +1474,13 @@ export default function ClientPage() {
           }
         }
       },
-      onGameEnded: () => {
-        playSFX('slam');
+      onGameEnded: (data) => {
+        stopAllAudio();
+        if (data && data.winnerId === user?.id) {
+          playSFX('victory_music');
+        } else {
+          playSFX('defeat_sound');
+        }
         setScreen('summary');
         refreshProfile();
       },
@@ -926,6 +1491,7 @@ export default function ClientPage() {
         }));
       },
       onPowerUpUsed: (data) => {
+        playSFX('power_up');
         const oppName = participants.find(p => p.userId === data.userId)?.username || (isRtl ? 'الخصم' : 'Opponent');
         if (data.powerUpType === 'FREEZE' && data.targetUserId === user!.id) {
           triggerGamingAlert(isRtl ? 'تم تجميدك من قبل الخصم!' : 'You have been frozen by the opponent!', 'warning');
@@ -1005,7 +1571,8 @@ export default function ClientPage() {
           userAnswer: null,
           correctAnswer: q.correctAnswer || q.orderingItems || q.matchingPairs,
           explanation: getLocalizedText(q.explanation),
-          timeSpent: 30
+          timeSpent: 30,
+          powerUpsUsed: [...activePowerUps]
         }
       ]);
     }
@@ -1202,7 +1769,8 @@ export default function ClientPage() {
           userAnswer: userAns,
           correctAnswer: q.correctAnswer || q.orderingItems || q.matchingPairs,
           explanation: getLocalizedText(q.explanation),
-          timeSpent: 30 - timeLeft
+          timeSpent: 30 - timeLeft,
+          powerUpsUsed: [...activePowerUps]
         }
       ]);
 
@@ -1223,11 +1791,26 @@ export default function ClientPage() {
           userAnswer: userAns,
           correctAnswer: q.correctAnswer || q.orderingItems || q.matchingPairs,
           explanation: getLocalizedText(q.explanation),
-          timeSpent: 30 - timeLeft
+          timeSpent: 30 - timeLeft,
+          powerUpsUsed: [...activePowerUps]
         }
       ]);
     }
   }
+
+  const submitVote = (category: string, candidateId: string) => {
+    if (!currentRoom || !socketRef.current) return;
+    setMyVotes((prev) => ({
+      ...prev,
+      [category]: candidateId
+    }));
+    playSFX('click');
+    socketRef.current.emit('game:submit_vote', {
+      roomId: currentRoom.code || currentRoom.id,
+      category,
+      candidateId
+    });
+  };
 
   function loadQuestion(index: number) {
     setCurrentQIndex(index);
@@ -1279,7 +1862,25 @@ export default function ClientPage() {
       updatedRankPoints = user.rankPoints + score;
     } else if (gameMode === 'DAILY_CHALLENGE') {
       const todayDateStr = new Date().toISOString().split('T')[0];
+      const prevDateStr = nextStats.lastDailyChallengeCompleted;
+      let currentStreak = nextStats.dailyStreak || 0;
+      
+      if (prevDateStr) {
+        const today = new Date(todayDateStr);
+        const prev = new Date(prevDateStr);
+        const diffDays = Math.floor((today.getTime() - prev.getTime()) / (1000 * 60 * 60 * 24));
+        
+        if (diffDays === 1) {
+          currentStreak += 1;
+        } else if (diffDays > 1) {
+          currentStreak = 1;
+        }
+      } else {
+        currentStreak = 1;
+      }
+      
       nextStats.lastDailyChallengeCompleted = todayDateStr;
+      nextStats.dailyStreak = currentStreak;
       updatedRankPoints = user.rankPoints + score;
     } else if (gameMode === 'SURVIVAL') {
       const reachedLevel = currentQIndex + (isAnswerCorrect ? 1 : 0);
@@ -1303,6 +1904,45 @@ export default function ClientPage() {
       console.log('Error saving user rewards:', e);
     }
   }
+
+  // Capture previous rank when gameplay starts
+  useEffect(() => {
+    if ((screen === 'game' || screen === 'cinematic') && user) {
+      previousRankRef.current = user.rank;
+      console.log('[Progression] Stored previous rank for match check:', user.rank);
+    }
+  }, [screen, user]);
+
+  // Check for rank promotion after profile refresh
+  useEffect(() => {
+    if (user && previousRankRef.current && previousRankRef.current !== user.rank) {
+      const ranks = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond', 'Master', 'Grand Master', 'Legend', 'Mythic', 'Titan'];
+      const oldIdx = ranks.indexOf(previousRankRef.current);
+      const newIdx = ranks.indexOf(user.rank);
+      
+      if (newIdx > oldIdx) {
+        console.log('[Progression] Rank UP detected! Old:', previousRankRef.current, 'New:', user.rank);
+        setRankUpCelebration({ show: true, oldRank: previousRankRef.current, newRank: user.rank });
+        playSFX('correct');
+      }
+      previousRankRef.current = null;
+    }
+  }, [user]);
+
+  // Check for newly unlocked badges
+  useEffect(() => {
+    if (user) {
+      if (previousBadgesRef.current !== null) {
+        const newlyUnlocked = (user.badges || []).filter(b => !previousBadgesRef.current!.includes(b));
+        if (newlyUnlocked.length > 0) {
+          console.log('[Progression] Badge UNLOCKED detected:', newlyUnlocked);
+          setUnlockedBadge({ show: true, key: newlyUnlocked[0] });
+          playSFX('correct');
+        }
+      }
+      previousBadgesRef.current = user.badges || [];
+    }
+  }, [user]);
 
   // ==========================================
   // Redirect if not logged in
@@ -1440,7 +2080,11 @@ export default function ClientPage() {
           return 0;
         }
         if (prev <= 6) {
-          playSFX('tick');
+          if (prev % 2 === 0) {
+            playSFX('countdown_tick');
+          } else {
+            playSFX('final_beep');
+          }
           triggerVibrate(30);
         }
         return prev - 1;
@@ -1985,18 +2629,34 @@ export default function ClientPage() {
   // ==========================================
   // Game Board Operations
   // ==========================================
-  const loadLeaderboardData = async () => {
+  const loadLeaderboardData = async (category: string = 'Global') => {
+    setLeaderboardCategory(category);
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('username, rank, rank_points, coins, stats')
-        .order('rank_points', { ascending: false })
-        .limit(10);
+      const { data, error } = await supabase.rpc('get_category_leaderboard', {
+        p_category: category,
+        p_limit: 10
+      });
+      
       if (!error && data) {
         setLeaderboard(data);
+      } else {
+        console.error('Error fetching leaderboard RPC:', error);
+        // Fallback to basic profiles query for Global if RPC is not deployed yet
+        if (category === 'Global') {
+          const { data: fbData, error: fbErr } = await supabase
+            .from('profiles')
+            .select('username, rank, rank_points, coins, stats')
+            .order('rank_points', { ascending: false })
+            .limit(10);
+          if (!fbErr && fbData) {
+            setLeaderboard(fbData);
+          }
+        } else {
+          setLeaderboard([]);
+        }
       }
     } catch (e) {
-      console.error('Error fetching leaderboard:', e);
+      console.error('Error in loadLeaderboardData:', e);
     }
   };
 
@@ -2009,6 +2669,8 @@ export default function ClientPage() {
     setCorrectAnswersCount(0);
     setAnswerSubmitted(false);
     setSoloHistory([]);
+    setMatchStartRP(user?.rankPoints || 0);
+    setMatchStartBadges(user?.badges || []);
 
     let questionsToLoad = SAMPLE_QUESTIONS;
     try {
@@ -2143,7 +2805,8 @@ export default function ClientPage() {
           answer,
           time_spent_ms,
           is_correct,
-          points_earned
+          points_earned,
+          power_ups_used
         `)
         .in('round_id', roundIds);
 
@@ -2155,6 +2818,27 @@ export default function ClientPage() {
 
       const typedAnswers = answers as unknown as DbAnswer[];
 
+      // 3.5 Fetch match participant rewards and stats
+      const { data: matchParticipantsStats, error: mpError } = await supabase
+        .from('match_participants')
+        .select(`
+          user_id,
+          team_id,
+          score,
+          correct_count,
+          incorrect_count,
+          fastest_answer_ms,
+          is_mvp,
+          rank_change,
+          coins_earned,
+          tokens_earned
+        `)
+        .eq('match_id', matchId);
+
+      if (mpError) {
+        console.warn("Could not fetch match participant stats, utilizing fallbacks:", mpError);
+      }
+
       // 4. Group details by player and by round
       const activePlayers = participants.filter((p) => !p.isSpectator);
 
@@ -2165,12 +2849,20 @@ export default function ClientPage() {
         const totalAnswered = playerAnswers.length;
         const accuracy = totalAnswered > 0 ? Math.round((correctCount / totalAnswered) * 100) : 0;
         
+        // Find matching stats row
+        const statsRow = matchParticipantsStats?.find((s) => s.user_id === p.userId);
+
         return {
           ...p,
           accuracy,
           correctCount,
           totalAnswered,
-          answers: playerAnswers
+          answers: playerAnswers,
+          isMvp: statsRow ? statsRow.is_mvp : false,
+          rankChange: statsRow ? statsRow.rank_change : 0,
+          coinsEarned: statsRow ? statsRow.coins_earned : 0,
+          tokensEarned: statsRow ? statsRow.tokens_earned : 0,
+          fastestAnswerMs: statsRow ? statsRow.fastest_answer_ms : null
         };
       });
 
@@ -2393,7 +3085,7 @@ export default function ClientPage() {
         triggerGamingAlert(isRtl ? 'تم حذف خيارين خاطئين!' : 'Two incorrect options removed!', 'success');
       } else {
         if (q && q.explanation) {
-          triggerGamingAlert(isRtl ? `تلميح: ${q.explanation}` : `Hint: ${q.explanation}`, 'info');
+          triggerGamingAlert(isRtl ? `تلميح: ${getLocalizedText(q.explanation)}` : `Hint: ${getLocalizedText(q.explanation)}`, 'info');
         } else if (q && q.options && q.options.length > 1) {
           let hiddenOne = false;
           for (const opt of q.options) {
@@ -2527,7 +3219,26 @@ export default function ClientPage() {
       correctLabel: 'Correct',
       incorrectLabel: 'Incorrect',
       noAnswerLabel: 'No Answer',
-      expandQuestion: 'Click to expand question body & explanation'
+      expandQuestion: 'Click to expand question body & explanation',
+      votingTitle: 'Awards Voting',
+      votingSub: 'Vote for the best players and answers of this match!',
+      timeLeft: 'Time Left',
+      mvpLabel: 'Match MVP (Best Player)',
+      bestTeamLabel: 'Best Team',
+      bestAnswerLabel: 'Best Answer',
+      voteCast: 'Vote Cast!',
+      awardsWinnersTitle: '🏆 Match Awards Winners 🏆',
+      mvpWinner: '🏆 Match MVP',
+      bestTeamWinner: '🔥 Best Team',
+      bestAnswerWinner: '💡 Best Answer',
+      votingConcluded: 'Voting Concluded',
+      rankProgression: 'Rank Progression',
+      highlightsTitle: 'Highlight Reel (Top Moments)',
+      avgSpeed: 'Average Speed',
+      fastestSpeed: 'Fastest Correct',
+      powerupsUsed: 'Power-ups Used',
+      shareResult: 'Share Result',
+      copiedToast: 'Copied to clipboard!'
     },
     ar: {
       title: 'سباق العقول',
@@ -2589,7 +3300,26 @@ export default function ClientPage() {
       correctLabel: 'صحيح',
       incorrectLabel: 'خاطئ',
       noAnswerLabel: 'لم يجب',
-      expandQuestion: 'اضغط لعرض نص السؤال والشرح'
+      expandQuestion: 'اضغط لعرض نص السؤال والشرح',
+      votingTitle: 'التصويت على الجوائز',
+      votingSub: 'صوت لأفضل اللاعبين والإجابات في هذه المواجهة!',
+      timeLeft: 'الوقت المتبقي',
+      mvpLabel: 'أفضل لاعب في المباراة (MVP)',
+      bestTeamLabel: 'أفضل فريق',
+      bestAnswerLabel: 'صاحب أفضل إجابة',
+      voteCast: 'تم التصويت!',
+      awardsWinnersTitle: '🏆 الفائزون بجوائز المواجهة 🏆',
+      mvpWinner: '🏆 أفضل لاعب (MVP)',
+      bestTeamWinner: '🔥 أفضل فريق',
+      bestAnswerWinner: '💡 صاحب أفضل إجابة',
+      votingConcluded: 'انتهى التصويت',
+      rankProgression: 'تقدم الرتبة',
+      highlightsTitle: 'أبرز لحظات المواجهة',
+      avgSpeed: 'متوسط سرعة الإجابة',
+      fastestSpeed: 'أسرع إجابة صحيحة',
+      powerupsUsed: 'المساعدات المستخدمة',
+      shareResult: 'مشاركة النتيجة',
+      copiedToast: 'تم نسخ النص إلى الحافظة!'
     }
   };
 
@@ -4097,7 +4827,7 @@ export default function ClientPage() {
                       <span style={{ color: '#00f2fe', fontWeight: 'bold' }}>Q{qIdx + 1} ({q.type})</span>
                       <span style={{ color: '#8a93c0' }}>{q.difficulty}</span>
                     </div>
-                    <p style={{ margin: '4px 0', fontSize: '0.8rem', color: '#ffffff' }}>{q.body}</p>
+                    <p style={{ margin: '4px 0', fontSize: '0.8rem', color: '#ffffff' }}>{getLocalizedText(q.body)}</p>
                     
                     {isCreator && (
                       <div style={{ marginTop: '4px', padding: '6px', backgroundColor: 'rgba(0, 255, 135, 0.04)', border: '1px solid rgba(0, 255, 135, 0.1)', borderRadius: '4px', fontSize: '0.75rem', color: '#00ff87' }}>
@@ -4107,7 +4837,7 @@ export default function ClientPage() {
                     )}
                     {q.explanation && (
                       <span style={{ fontSize: '0.7rem', color: '#8a93c0', fontStyle: 'italic' }}>
-                        💡 {q.explanation}
+                        💡 {getLocalizedText(q.explanation)}
                       </span>
                     )}
                   </div>
@@ -4414,11 +5144,50 @@ export default function ClientPage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px' }}>
                     <button style={styles.backBtn} onClick={() => setViewingLeaderboard(false)}>◀</button>
                     <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#ffffff' }}>
-                      {isRtl ? 'لوحة الصدارة العالمية' : 'Global Leaderboard'}
+                      {leaderboardCategory === 'Global' ? (isRtl ? 'لوحة الصدارة العالمية' : 'Global Leaderboard')
+                       : leaderboardCategory === 'Science' ? (isRtl ? 'لوحة صدارة العلوم' : 'Science Leaderboard')
+                       : leaderboardCategory === 'History' ? (isRtl ? 'لوحة صدارة التاريخ' : 'History Leaderboard')
+                       : (isRtl ? 'لوحة صدارة البقاء' : 'Survival Leaderboard')}
                     </h2>
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', maxHeight: '420px', paddingRight: '4px' }}>
+                  {/* Category Leaderboard Tabs */}
+                  <div style={{ display: 'flex', gap: '6px', marginBottom: '14px', flexWrap: 'wrap' }}>
+                    {['Global', 'Science', 'History', 'Survival'].map((cat) => {
+                      const isActive = leaderboardCategory === cat;
+                      const getLabel = () => {
+                        if (cat === 'Global') return isRtl ? 'العالمية' : 'Global';
+                        if (cat === 'Science') return isRtl ? 'العلوم' : 'Science';
+                        if (cat === 'History') return isRtl ? 'التاريخ' : 'History';
+                        if (cat === 'Survival') return isRtl ? 'البقاء' : 'Survival';
+                        return cat;
+                      };
+                      return (
+                        <button
+                          key={cat}
+                          onClick={() => { playSFX('click'); loadLeaderboardData(cat); }}
+                          style={{
+                            flex: 1,
+                            padding: '6px 10px',
+                            borderRadius: '20px',
+                            border: isActive ? '1px solid #00f2fe' : '1px solid rgba(255, 255, 255, 0.05)',
+                            background: isActive ? 'rgba(0, 242, 254, 0.12)' : 'rgba(255,255,255,0.02)',
+                            color: isActive ? '#00f2fe' : '#8a93c0',
+                            fontSize: '0.75rem',
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                            whiteSpace: 'nowrap'
+                          }}
+                          id={`leaderboard-tab-${cat.toLowerCase()}`}
+                        >
+                          {getLabel()}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', maxHeight: '360px', paddingRight: '4px' }}>
                     {leaderboard.map((player, index) => {
                       const isSelf = player.username === user?.username;
                       const badgeColors = ['#ffd700', '#c0c0c0', '#cd7f32'];
@@ -4445,25 +5214,33 @@ export default function ClientPage() {
                             }}>
                               {index + 1}
                             </span>
-                            <div style={{ display: 'flex', flexDirection: 'column' }}>
-                              <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#ffffff' }}>
-                                {player.username} {isSelf && `(${isRtl ? 'أنت' : 'You'})`}
-                              </span>
-                              <span style={{ fontSize: '0.7rem', color: '#8a93c0' }}>
-                                {player.rank}
-                              </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <RankBadge rank={player.rank} size={28} animate={false} />
+                              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#ffffff' }}>
+                                  {player.username} {isSelf && `(${isRtl ? 'أنت' : 'You'})`}
+                                </span>
+                                <span style={{ fontSize: '0.7rem', color: '#8a93c0' }}>
+                                  {player.rank}
+                                </span>
+                              </div>
                             </div>
                           </div>
                           
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
                             <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#00f2fe' }} className="text-glow-accent">
-                              {player.rank_points || player.rankPoints || 0} RP
+                              {leaderboardCategory === 'Global' ? (
+                                `${player.rank_points || player.rankPoints || 0} RP`
+                              ) : leaderboardCategory === 'Science' ? (
+                                `${player.stats?.correct_Science ?? 0} 🧪`
+                              ) : leaderboardCategory === 'History' ? (
+                                `${player.stats?.correct_History ?? 0} 📜`
+                              ) : leaderboardCategory === 'Survival' ? (
+                                `${isRtl ? 'المستوى' : 'Lvl'} ${player.stats?.bestSurvivalLevel ?? 0} ⛺`
+                              ) : (
+                                `${player.sort_value || 0}`
+                              )}
                             </span>
-                            {player.stats?.bestSurvivalLevel && (
-                              <span style={{ fontSize: '0.65rem', color: '#ffb300' }}>
-                                🔥 {isRtl ? 'أفضل بقاء:' : 'Survival Best:'} Lvl {player.stats.bestSurvivalLevel}
-                              </span>
-                            )}
                           </div>
                         </div>
                       );
@@ -4476,7 +5253,7 @@ export default function ClientPage() {
                   <span style={{ cursor: 'pointer' }} onClick={() => { setViewingLeaderboard(false); setViewingTournaments(false); setViewingPacks(true); fetchPacks(); }}>📦</span>
                   <span>⚔️</span>
                   <span style={{ cursor: 'pointer' }} onClick={() => { setViewingLeaderboard(false); setViewingTournaments(true); setViewingPacks(false); fetchTournaments(); }}>🏰</span>
-                  <span style={{ cursor: 'pointer', ...styles.activeNavTab }} onClick={loadLeaderboardData}>🏆</span>
+                  <span style={{ cursor: 'pointer', ...styles.activeNavTab }} onClick={() => { playSFX('click'); loadLeaderboardData('Global'); }}>🏆</span>
                 </div>
               </div>
             ) : viewingTournaments ? (
@@ -4491,10 +5268,14 @@ export default function ClientPage() {
                 <>
                   <div style={styles.topProfileBar}>
                     <div style={styles.avatarGroup}>
-                      <div style={{
-                        ...styles.avatarRing,
-                        borderColor: `var(--color-${user.rank.toLowerCase().replace(' ', '')})`
-                      }}>
+                      <div 
+                        style={{
+                          ...styles.avatarRing,
+                          ...getEquippedBorderStyle(user.equipped?.border, user.rank),
+                          cursor: 'pointer'
+                        }}
+                        onClick={() => { playSFX('click'); setIsProfileModalOpen(true); }}
+                      >
                         👤
                       </div>
                       <div style={styles.levelBadge}>
@@ -4507,6 +5288,21 @@ export default function ClientPage() {
 
                     <div style={styles.topRightControls}>
                       <span style={styles.walletCount}>🪙 {user.coins}</span>
+                      <button 
+                        style={styles.shopBtn} 
+                        onClick={() => { playSFX('click'); setIsShopOpen(true); }}
+                        id="btn-open-shop"
+                        title={isRtl ? 'متجر المظاهر' : 'Cosmetics Shop'}
+                      >
+                        🛒
+                      </button>
+                      <button 
+                        style={styles.shopBtn} 
+                        onClick={() => { playSFX('click'); setIsSettingsOpen(true); }}
+                        title={isRtl ? 'الإعدادات' : 'Settings'}
+                      >
+                        ⚙️
+                      </button>
                       <button style={styles.langBtn} onClick={() => { playSFX('click'); setIsRtl(!isRtl); }}>
                         {isRtl ? 'EN' : 'عربي'}
                       </button>
@@ -4516,9 +5312,16 @@ export default function ClientPage() {
                     </div>
                   </div>
 
-                  <div style={styles.rankBadgeCard}>
-                    <div style={styles.rankGlowText} className="text-glow">
+                  <div 
+                    style={{ ...styles.rankBadgeCard, cursor: 'pointer' }}
+                    onClick={() => { playSFX('click'); setIsProfileModalOpen(true); }}
+                  >
+                    <RankBadge rank={user.rank} size={80} animate={true} style={{ marginBottom: '8px' }} />
+                    <div style={{ ...styles.rankGlowText, color: `var(--color-${user.rank.toLowerCase().replace(' ', '')})` }} className="text-glow">
                       {user.rank}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#ffffff', marginTop: '4px' }}>
+                      {user.rankPoints} RP
                     </div>
                     <div style={styles.latencyLabel}>
                       DB: <span style={{ color: apiStatus === 'online' ? '#00ff87' : '#ff3b5c' }}>
@@ -4532,6 +5335,20 @@ export default function ClientPage() {
 
                   <div style={styles.titleWrapper}>
                     <h1 style={styles.glowTitle} className="text-glow">{t.title}</h1>
+                    {activeSeason && (
+                      <div style={{
+                        fontSize: '0.9rem',
+                        fontFamily: 'var(--font-ui)',
+                        color: 'var(--cyan-glow)',
+                        marginTop: '8px',
+                        textTransform: 'uppercase',
+                        letterSpacing: '2px',
+                        fontWeight: 'bold',
+                        textShadow: '0 0 10px rgba(0, 245, 255, 0.4)'
+                      }}>
+                        ⚡ {activeSeason.name}
+                      </div>
+                    )}
                   </div>
 
                   <div style={styles.playHeroContainer}>
@@ -4637,6 +5454,26 @@ export default function ClientPage() {
                         </button>
                       </div>
                     </div>
+
+                    {user && (
+                      <SeasonTrackerPanel
+                        user={user}
+                        isRtl={isRtl}
+                        refreshProfile={refreshProfile}
+                        triggerAlert={triggerGamingAlert}
+                        playSFX={playSFX}
+                      />
+                    )}
+
+                    {user && (
+                      <QuestsPanel
+                        user={user}
+                        isRtl={isRtl}
+                        refreshProfile={refreshProfile}
+                        triggerAlert={triggerGamingAlert}
+                        playSFX={playSFX}
+                      />
+                    )}
                   </div>
 
                   <div style={styles.bottomNavMock}>
@@ -5132,7 +5969,9 @@ export default function ClientPage() {
                   {participants.filter(p => !p.isSpectator && p.userId !== currentRoom.config?.judgeId).map((player) => (
                     <div key={player.userId} style={styles.playerCard}>
                       <div style={styles.playerMetaLeft}>
-                        <div style={styles.avatarCircleMock}>👤</div>
+                        <div style={{ marginRight: isRtl ? '0' : '8px', marginLeft: isRtl ? '8px' : '0' }}>
+                          <RankBadge rank={player.rank} size={36} animate={false} />
+                        </div>
                         <div style={styles.playerTexts}>
                           <span style={styles.pCardUsername}>{player.username}</span>
                           <span style={styles.pCardRank}>{player.rank}</span>
@@ -6233,6 +7072,10 @@ export default function ClientPage() {
                 )}
               </div>
 
+              {answerSubmitted && isAnswerCorrect && (
+                <AnswerEffectCelebration effectKey={user?.equipped?.effect} />
+              )}
+
               {answerSubmitted && (
                 <div style={{
                   ...styles.feedbackPanel,
@@ -6621,51 +7464,438 @@ export default function ClientPage() {
                   : (score >= topScore && score > 0);
               }
 
+              const getPercentageForCandidate = (category: string, candidateId: string) => {
+                const votesForCategory = liveVotes[category] || {};
+                const totalVotes = Object.values(votesForCategory).reduce((sum, count) => sum + count, 0);
+                if (totalVotes === 0) return 0;
+                const candCount = votesForCategory[candidateId] || 0;
+                return Math.round((candCount / totalVotes) * 100);
+              };
+
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%' }}>
                   
-                  {/* Victory/Defeat Premium Banner */}
-                  <div 
-                    className={isVictory ? "victory-banner" : "defeat-banner"}
-                    style={{
+                  {/* Voting Card Panel */}
+                  {votingActive && (
+                    <div style={{
+                      backgroundColor: 'rgba(11, 13, 26, 0.95)',
+                      border: '2px solid rgba(0, 245, 255, 0.2)',
                       borderRadius: '16px',
                       padding: '24px',
-                      textAlign: 'center',
                       display: 'flex',
                       flexDirection: 'column',
-                      alignItems: 'center',
-                      gap: '12px',
-                      boxShadow: isVictory ? '0 0 30px rgba(0, 230, 118, 0.15)' : '0 0 30px rgba(255, 23, 68, 0.15)',
-                      transition: 'var(--transition-smooth)'
-                    }}
-                  >
-                    <span 
-                      className="animate-float" 
-                      style={{ 
-                        fontSize: '4.5rem',
-                        filter: isVictory ? 'drop-shadow(0 0 15px rgba(0,230,118,0.5))' : 'drop-shadow(0 0 15px rgba(255,23,68,0.5))'
-                      }}
-                    >
-                      {isVictory ? '👑' : '💀'}
-                    </span>
-                    <h1 
-                      style={{ 
-                        fontSize: '2.5rem', 
-                        fontWeight: 900, 
-                        letterSpacing: '1px',
-                        textShadow: isVictory ? '0 0 15px rgba(0, 230, 118, 0.6)' : '0 0 15px rgba(255, 23, 68, 0.6)',
-                        color: '#ffffff'
-                      }}
-                    >
-                      {isVictory ? t.victoryTitle : t.defeatTitle}
-                    </h1>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', maxWidth: '320px', lineHeight: 1.5 }}>
-                      {isVictory 
-                        ? (currentRoom ? (isRtl ? 'لقد سيطرت على ساحة المعركة المعرفية وتفوقت على الجميع!' : 'You dominated the cognitive arena and outsmarted everyone!') : (isRtl ? 'أداء رائع! لقد أكملت التحدي بدقة عالية!' : 'Fantastic job! You completed the challenge successfully!'))
-                        : (currentRoom ? (isRtl ? 'الهزيمة ليست النهاية، بل بداية طريق التميز والتعلم!' : 'Defeat is not the end, but the beginning of mastery!') : (isRtl ? 'استمر في التحدي! الممارسة تصنع الفارق دائماً!' : 'Keep practicing! Repetition is the key to mastery!'))
-                      }
-                    </p>
-                  </div>
+                      gap: '20px',
+                      width: '100%',
+                      boxShadow: '0 0 30px rgba(0, 245, 255, 0.1)',
+                      boxSizing: 'border-box',
+                      backdropFilter: 'blur(10px)',
+                      zIndex: 10,
+                      position: 'relative'
+                    }}>
+                      {/* Header and Countdown */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255, 255, 255, 0.08)', paddingBottom: '12px' }}>
+                        <div>
+                          <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#ffffff', margin: 0, fontFamily: 'var(--font-display)' }}>
+                            🏆 {t.votingTitle}
+                          </h2>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                            {t.votingSub}
+                          </span>
+                        </div>
+                        <div style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          background: votingTimeLeft <= 5 ? 'rgba(255, 59, 92, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                          border: `1px solid ${votingTimeLeft <= 5 ? '#ff3b5c' : 'rgba(255, 255, 255, 0.1)'}`,
+                          padding: '6px 12px',
+                          borderRadius: '8px'
+                        }}>
+                          <span style={{ fontSize: '0.65rem', color: votingTimeLeft <= 5 ? '#ff3b5c' : 'var(--text-secondary)', fontWeight: 'bold', textTransform: 'uppercase' }}>
+                            {t.timeLeft}
+                          </span>
+                          <span style={{ fontSize: '1.4rem', fontWeight: 900, color: votingTimeLeft <= 5 ? '#ff3b5c' : '#00f2fe', fontFamily: 'var(--font-ui)' }}>
+                            {votingTimeLeft}s
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Voting Categories */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                        
+                        {/* Category: MVP */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#ffd700', margin: 0 }}>
+                            🌟 {t.mvpLabel}
+                          </h3>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {votingCandidates?.bestPlayer.map((cand) => {
+                              const candId = cand.id;
+                              const candName = cand.username;
+                              const isSelf = candId === user?.id;
+                              const isVoted = myVotes['best_player'] === candId;
+                              const hasVotedThisCat = myVotes['best_player'] !== undefined;
+                              const pct = getPercentageForCandidate('best_player', candId);
+                              const votesCount = (liveVotes['best_player'] || {})[candId] || 0;
+
+                              return (
+                                <button
+                                  key={candId}
+                                  disabled={isSelf || hasVotedThisCat}
+                                  onClick={() => submitVote('best_player', candId)}
+                                  style={{
+                                    position: 'relative',
+                                    width: '100%',
+                                    padding: '12px 16px',
+                                    backgroundColor: isVoted ? 'rgba(0, 245, 255, 0.1)' : 'rgba(255, 255, 255, 0.02)',
+                                    border: isVoted ? '1px solid #00f2fe' : '1px solid rgba(255, 255, 255, 0.05)',
+                                    borderRadius: '8px',
+                                    color: isSelf ? 'var(--text-muted)' : '#ffffff',
+                                    cursor: (isSelf || hasVotedThisCat) ? 'default' : 'pointer',
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    overflow: 'hidden',
+                                    transition: 'all 0.2s ease',
+                                    textAlign: isRtl ? 'right' : 'left'
+                                  }}
+                                >
+                                  {/* Background Progress Bar */}
+                                  {hasVotedThisCat && (
+                                    <div style={{
+                                      position: 'absolute',
+                                      top: 0,
+                                      [isRtl ? 'right' : 'left']: 0,
+                                      height: '100%',
+                                      width: `${pct}%`,
+                                      background: isVoted ? 'linear-gradient(90deg, rgba(0, 242, 254, 0.15), rgba(0, 242, 254, 0.05))' : 'rgba(255, 255, 255, 0.03)',
+                                      transition: 'width 0.5s ease-out',
+                                      zIndex: 1
+                                    }} />
+                                  )}
+                                  
+                                  <span style={{ zIndex: 2, fontWeight: isVoted ? 800 : 500, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    {candName}
+                                    {isSelf && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>({isRtl ? 'أنت' : 'Self'})</span>}
+                                    {isVoted && <span style={{ fontSize: '0.75rem', color: '#00f2fe' }}>✔ {t.voteCast}</span>}
+                                  </span>
+                                  {hasVotedThisCat && (
+                                    <span style={{ zIndex: 2, fontSize: '0.85rem', fontWeight: 'bold', color: isVoted ? '#00f2fe' : 'var(--text-secondary)' }}>
+                                      {pct}% ({votesCount})
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Category: Best Team (if team battle) */}
+                        {votingCandidates?.bestTeam && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#ff4d6d', margin: 0 }}>
+                              🔥 {t.bestTeamLabel}
+                            </h3>
+                            <div style={{ display: 'flex', gap: '10px' }}>
+                              {votingCandidates.bestTeam.map((teamId) => {
+                                const teamName = teamId === 'team_a' ? (isRtl ? 'الفريق أ (الأزرق)' : 'Team A (Blue)') : (isRtl ? 'الفريق ب (الأحمر)' : 'Team B (Red)');
+                                const isVoted = myVotes['best_team'] === teamId;
+                                const hasVotedThisCat = myVotes['best_team'] !== undefined;
+                                const pct = getPercentageForCandidate('best_team', teamId);
+                                const votesCount = (liveVotes['best_team'] || {})[teamId] || 0;
+                                const teamColor = teamId === 'team_a' ? '#00f2fe' : '#ff3b5c';
+
+                                return (
+                                  <button
+                                    key={teamId}
+                                    disabled={hasVotedThisCat}
+                                    onClick={() => submitVote('best_team', teamId)}
+                                    style={{
+                                      position: 'relative',
+                                      flex: 1,
+                                      padding: '16px 12px',
+                                      backgroundColor: isVoted ? `rgba(${teamId === 'team_a' ? '0, 242, 254' : '255, 59, 92'}, 0.1)` : 'rgba(255, 255, 255, 0.02)',
+                                      border: `1px solid ${isVoted ? teamColor : 'rgba(255, 255, 255, 0.05)'}`,
+                                      borderRadius: '8px',
+                                      color: '#ffffff',
+                                      cursor: hasVotedThisCat ? 'default' : 'pointer',
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      gap: '6px',
+                                      overflow: 'hidden',
+                                      transition: 'all 0.2s ease',
+                                    }}
+                                  >
+                                    {/* Background Progress Fill */}
+                                    {hasVotedThisCat && (
+                                      <div style={{
+                                        position: 'absolute',
+                                        bottom: 0,
+                                        left: 0,
+                                        width: '100%',
+                                        height: `${pct}%`,
+                                        background: `rgba(${teamId === 'team_a' ? '0, 242, 254' : '255, 59, 92'}, 0.08)`,
+                                        transition: 'height 0.5s ease-out',
+                                        zIndex: 1
+                                      }} />
+                                    )}
+                                    
+                                    <span style={{ zIndex: 2, fontWeight: isVoted ? 800 : 600, color: teamColor, fontSize: '0.9rem' }}>
+                                      {teamName}
+                                    </span>
+                                    {isVoted && <span style={{ zIndex: 2, fontSize: '0.7rem', color: teamColor }}>✔ {t.voteCast}</span>}
+                                    {hasVotedThisCat && (
+                                      <span style={{ zIndex: 2, fontSize: '1rem', fontWeight: 'bold', color: '#ffffff', marginTop: '4px' }}>
+                                        {pct}% ({votesCount})
+                                      </span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Category: Best Answer (if team battle) */}
+                        {votingCandidates?.bestAnswer && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#00f5ff', margin: 0 }}>
+                              💡 {t.bestAnswerLabel}
+                            </h3>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {votingCandidates.bestAnswer.map((cand) => {
+                                const candId = cand.id;
+                                const candName = cand.username;
+                                const isSelf = candId === user?.id;
+                                const isVoted = myVotes['best_answer'] === candId;
+                                const hasVotedThisCat = myVotes['best_answer'] !== undefined;
+                                const pct = getPercentageForCandidate('best_answer', candId);
+                                const votesCount = (liveVotes['best_answer'] || {})[candId] || 0;
+
+                                return (
+                                  <button
+                                    key={candId}
+                                    disabled={isSelf || hasVotedThisCat}
+                                    onClick={() => submitVote('best_answer', candId)}
+                                    style={{
+                                      position: 'relative',
+                                      width: '100%',
+                                      padding: '12px 16px',
+                                      backgroundColor: isVoted ? 'rgba(0, 245, 255, 0.1)' : 'rgba(255, 255, 255, 0.02)',
+                                      border: isVoted ? '1px solid #00f2fe' : '1px solid rgba(255, 255, 255, 0.05)',
+                                      borderRadius: '8px',
+                                      color: isSelf ? 'var(--text-muted)' : '#ffffff',
+                                      cursor: (isSelf || hasVotedThisCat) ? 'default' : 'pointer',
+                                      display: 'flex',
+                                      justifyContent: 'space-between',
+                                      alignItems: 'center',
+                                      overflow: 'hidden',
+                                      transition: 'all 0.2s ease',
+                                      textAlign: isRtl ? 'right' : 'left'
+                                    }}
+                                  >
+                                    {/* Background Progress Bar */}
+                                    {hasVotedThisCat && (
+                                      <div style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        [isRtl ? 'right' : 'left']: 0,
+                                        height: '100%',
+                                        width: `${pct}%`,
+                                        background: isVoted ? 'linear-gradient(90deg, rgba(0, 242, 254, 0.15), rgba(0, 242, 254, 0.05))' : 'rgba(255, 255, 255, 0.03)',
+                                        transition: 'width 0.5s ease-out',
+                                        zIndex: 1
+                                      }} />
+                                    )}
+                                    
+                                    <span style={{ zIndex: 2, fontWeight: isVoted ? 800 : 500, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                      {candName}
+                                      {isSelf && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>({isRtl ? 'أنت' : 'Self'})</span>}
+                                      {isVoted && <span style={{ fontSize: '0.75rem', color: '#00f2fe' }}>✔ {t.voteCast}</span>}
+                                    </span>
+                                    {hasVotedThisCat && (
+                                      <span style={{ zIndex: 2, fontSize: '0.85rem', fontWeight: 'bold', color: isVoted ? '#00f2fe' : 'var(--text-secondary)' }}>
+                                        {pct}% ({votesCount})
+                                      </span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                      </div>
+                    </div>
+                  )}
+
+                  {!votingActive && (
+                    <>
+                      {/* Victory/Defeat Premium Banner */}
+                      <div 
+                        className={isVictory ? "victory-banner" : "defeat-banner"}
+                        style={{
+                          borderRadius: '16px',
+                          padding: '24px',
+                          textAlign: 'center',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: '12px',
+                          boxShadow: isVictory ? '0 0 30px rgba(0, 230, 118, 0.15)' : '0 0 30px rgba(255, 23, 68, 0.15)',
+                          transition: 'var(--transition-smooth)'
+                        }}
+                      >
+                        <span 
+                          className="animate-float" 
+                          style={{ 
+                            fontSize: '4.5rem',
+                            filter: isVictory ? 'drop-shadow(0 0 15px rgba(0,230,118,0.5))' : 'drop-shadow(0 0 15px rgba(255,23,68,0.5))'
+                          }}
+                        >
+                          {isVictory ? '👑' : '💀'}
+                        </span>
+                        <h1 
+                          style={{ 
+                            fontSize: '2.5rem', 
+                            fontWeight: 900, 
+                            letterSpacing: '1px',
+                            textShadow: isVictory ? '0 0 15px rgba(0, 230, 118, 0.6)' : '0 0 15px rgba(255, 23, 68, 0.6)',
+                            color: '#ffffff'
+                          }}
+                        >
+                          {isVictory ? t.victoryTitle : t.defeatTitle}
+                        </h1>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', maxWidth: '320px', lineHeight: 1.5 }}>
+                          {isVictory 
+                            ? (currentRoom ? (isRtl ? 'لقد سيطرت على ساحة المعركة المعرفية وتفوقت على الجميع!' : 'You dominated the cognitive arena and outsmarted everyone!') : (isRtl ? 'أداء رائع! لقد أكملت التحدي بدقة عالية!' : 'Fantastic job! You completed the challenge successfully!'))
+                            : (currentRoom ? (isRtl ? 'الهزيمة ليست النهاية، بل بداية طريق التميز والتعلم!' : 'Defeat is not the end, but the beginning of mastery!') : (isRtl ? 'استمر في التحدي! الممارسة تصنع الفارق دائماً!' : 'Keep practicing! Repetition is the key to mastery!'))
+                          }
+                        </p>
+                      </div>
+
+                      {/* Awards Winners Banner */}
+                      {votingWinners && (
+                        <div style={{
+                          background: 'linear-gradient(135deg, rgba(11, 13, 26, 0.9) 0%, rgba(17, 19, 31, 0.95) 100%)',
+                          border: '2px solid #ffd700',
+                          borderRadius: '16px',
+                          padding: '20px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '14px',
+                          boxShadow: '0 0 25px rgba(255, 215, 0, 0.15)',
+                          boxSizing: 'border-box',
+                          textAlign: 'center',
+                          position: 'relative',
+                          overflow: 'hidden',
+                          marginTop: '10px'
+                        }}>
+                          {/* Sparkles / Gold Ambient Glow */}
+                          <div style={{
+                            position: 'absolute',
+                            top: '-50%',
+                            left: '-50%',
+                            width: '200%',
+                            height: '200%',
+                            background: 'radial-gradient(circle, rgba(255, 215, 0, 0.05) 0%, transparent 70%)',
+                            pointerEvents: 'none'
+                          }} />
+
+                          <h2 style={{
+                            fontSize: '1.25rem',
+                            fontWeight: 800,
+                            color: '#ffd700',
+                            margin: 0,
+                            fontFamily: 'var(--font-display)',
+                            textTransform: 'uppercase',
+                            letterSpacing: '1px',
+                            textShadow: '0 0 10px rgba(255, 215, 0, 0.3)',
+                            zIndex: 2
+                          }}>
+                            {t.awardsWinnersTitle}
+                          </h2>
+
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: votingWinners.bestTeam ? '1fr 1fr 1fr' : '1fr',
+                            gap: '12px',
+                            zIndex: 2,
+                            alignItems: 'stretch'
+                          }}>
+                            {/* Award: MVP */}
+                            <div style={{
+                              background: 'rgba(255, 215, 0, 0.03)',
+                              border: '1px solid rgba(255, 215, 0, 0.15)',
+                              borderRadius: '10px',
+                              padding: '12px 8px',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              gap: '6px',
+                              justifyContent: 'center'
+                            }}>
+                              <span style={{ fontSize: '0.75rem', color: '#ffd700', fontWeight: 'bold', textTransform: 'uppercase' }}>
+                                {t.mvpWinner}
+                              </span>
+                              <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#ffffff', fontFamily: 'var(--font-display)' }}>
+                                {votingWinners.bestPlayer || (isRtl ? 'لا يوجد' : 'No votes')}
+                              </span>
+                            </div>
+
+                            {/* Award: Best Team (if team battle) */}
+                            {votingWinners.bestTeam && (
+                              <div style={{
+                                background: 'rgba(255, 59, 92, 0.03)',
+                                border: '1px solid rgba(255, 59, 92, 0.15)',
+                                borderRadius: '10px',
+                                padding: '12px 8px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                gap: '6px',
+                                justifyContent: 'center'
+                              }}>
+                                <span style={{ fontSize: '0.75rem', color: '#ff4d6d', fontWeight: 'bold', textTransform: 'uppercase' }}>
+                                  {t.bestTeamWinner}
+                                </span>
+                                <span style={{
+                                  fontSize: '1.1rem',
+                                  fontWeight: 900,
+                                  color: votingWinners.bestTeam.includes('A') ? '#00f2fe' : '#ff3b5c',
+                                  fontFamily: 'var(--font-display)'
+                                }}>
+                                  {votingWinners.bestTeam}
+                                </span>
+                              </div>
+                            )}
+
+                            {/* Award: Best Answer (if team battle) */}
+                            {votingWinners.bestAnswer && (
+                              <div style={{
+                                background: 'rgba(0, 245, 255, 0.03)',
+                                border: '1px solid rgba(0, 245, 255, 0.15)',
+                                borderRadius: '10px',
+                                padding: '12px 8px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                gap: '6px',
+                                justifyContent: 'center'
+                              }}>
+                                <span style={{ fontSize: '0.75rem', color: '#00f5ff', fontWeight: 'bold', textTransform: 'uppercase' }}>
+                                  {t.bestAnswerWinner}
+                                </span>
+                                <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#ffffff', fontFamily: 'var(--font-display)' }}>
+                                  {votingWinners.bestAnswer || (isRtl ? 'لا يوجد' : 'No votes')}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
 
                   {/* Personal Summary Stats */}
                   <div style={styles.summaryStatsGrid}>
@@ -6783,9 +8013,7 @@ export default function ClientPage() {
                                 <td style={{ fontWeight: 800, fontSize: idx < 3 ? '1.2rem' : '0.9rem' }}>{medal}</td>
                                 <td>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: isRtl ? 'flex-end' : 'flex-start' }}>
-                                    <div className="avatar-container" style={{ border: isSelf ? '2px solid var(--primary)' : '2px solid var(--border-glass)' }}>
-                                      {p.username.substring(0, 2).toUpperCase()}
-                                    </div>
+                                    <RankBadge rank={p.rank} size={32} animate={false} />
                                     <span style={{ fontWeight: isSelf ? 800 : 500 }}>
                                       {p.username}
                                     </span>
@@ -6886,7 +8114,7 @@ export default function ClientPage() {
                               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                 <span style={{ fontWeight: 800, color: 'var(--primary)' }}>Q{r.roundNumber}</span>
                                 <span style={{ color: '#ffffff', fontSize: '0.88rem', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: '180px' }}>
-                                  {r.questionBody}
+                                  {getLocalizedText(r.questionBody)}
                                 </span>
                               </div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -6921,7 +8149,7 @@ export default function ClientPage() {
                                   <span style={{ fontWeight: 700, display: 'block', color: 'var(--primary)', marginBottom: '4px' }}>
                                     {isRtl ? 'السؤال الكامل:' : 'Full Question:'}
                                   </span>
-                                  {r.questionBody}
+                                  {getLocalizedText(r.questionBody)}
                                 </div>
 
                                 {/* Player results details */}
@@ -6970,12 +8198,14 @@ export default function ClientPage() {
                     </div>
                   </div>
 
-                  {/* summary footer / return btn */}
-                  <div style={styles.summaryFooter}>
-                    <button style={styles.returnHubBtn} onClick={() => { playSFX('click'); setScreen('dashboard'); }}>
-                      {t.dashboardBtn}
-                    </button>
-                  </div>
+                      {/* summary footer / return btn */}
+                      <div style={styles.summaryFooter}>
+                        <button style={styles.returnHubBtn} onClick={() => { playSFX('click'); setScreen('dashboard'); setVotingActive(false); setVotingWinners(null); setMyVotes({}); setLiveVotes({}); }}>
+                          {t.dashboardBtn}
+                        </button>
+                      </div>
+                    </>
+                  )}
 
                 </div>
               );
@@ -7258,6 +8488,272 @@ export default function ClientPage() {
           </div>
         )}
 
+        {/* PLAYER PROFILE DASHBOARD MODAL */}
+        {user && (
+          <PlayerProfileModal 
+            user={user as any}
+            isOpen={isProfileModalOpen}
+            onClose={() => setIsProfileModalOpen(false)}
+            isRtl={isRtl}
+          />
+        )}
+
+        {/* COSMETIC SHOP MODAL */}
+        {user && (
+          <CosmeticShopModal
+            user={user}
+            isOpen={isShopOpen}
+            onClose={() => setIsShopOpen(false)}
+            isRtl={isRtl}
+            refreshProfile={refreshProfile}
+            triggerAlert={triggerGamingAlert}
+            playSFX={playSFX}
+          />
+        )}
+
+        {/* SETTINGS MODAL */}
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          sfxEnabled={sfxEnabled}
+          setSfxEnabled={setSfxEnabled}
+          sfxVolume={sfxVolume}
+          setSfxVolume={setSfxVolume}
+          isRtl={isRtl}
+          setIsRtl={setIsRtl}
+          playSFX={playSFX}
+        />
+
+        {/* RANK UP CELEBRATION OVERLAY */}
+        {rankUpCelebration?.show && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            backgroundColor: 'rgba(5, 6, 10, 0.95)',
+            backdropFilter: 'blur(15px)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1001,
+            animation: 'fadeIn 0.5s ease-out'
+          }}>
+            {/* Pulsing golden/solar background rays */}
+            <div style={{
+              position: 'absolute',
+              width: '400px',
+              height: '400px',
+              background: 'radial-gradient(circle, rgba(255, 215, 0, 0.15) 0%, transparent 70%)',
+              filter: 'blur(30px)',
+              pointerEvents: 'none',
+              animation: 'pulse-glow 3s infinite ease-in-out',
+              zIndex: 1
+            }} />
+
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '24px',
+              zIndex: 2,
+              textAlign: 'center',
+              padding: '40px',
+              backgroundColor: 'rgba(15, 18, 30, 0.65)',
+              border: '2px solid rgba(255, 215, 0, 0.25)',
+              borderRadius: '24px',
+              boxShadow: '0 0 50px rgba(255, 215, 0, 0.15)',
+              maxWidth: '450px',
+              boxSizing: 'border-box'
+            }} className="glass-panel">
+              <span style={{ fontSize: '4.5rem', filter: 'drop-shadow(0 0 10px rgba(255,215,0,0.4))' }} className="animate-float">✨🏆✨</span>
+              <h1 style={{
+                fontSize: '3rem',
+                fontWeight: 900,
+                color: '#ffffff',
+                textShadow: '0 0 15px rgba(255, 215, 0, 0.6)',
+                margin: '0',
+                letterSpacing: '2px'
+              }} className="text-glow">
+                {isRtl ? 'ترقية الرتبة!' : 'RANK UP!'}
+              </h1>
+              
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '16px',
+                margin: '12px 0'
+              }}>
+                <div style={{ opacity: 0.65, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <RankBadge rank={rankUpCelebration.oldRank} size={70} animate={false} />
+                  <span style={{ fontSize: '0.8rem', color: '#a0aec0', marginTop: '4px' }}>{rankUpCelebration.oldRank}</span>
+                </div>
+                
+                <span style={{
+                  fontSize: '2.5rem',
+                  fontWeight: 'bold',
+                  color: '#ffd700',
+                  textShadow: '0 0 10px rgba(255,215,0,0.5)',
+                  animation: 'float 2s ease-in-out infinite'
+                }}>
+                  ➔
+                </span>
+
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <RankBadge rank={rankUpCelebration.newRank} size={150} animate={true} />
+                  <span style={{ 
+                    fontSize: '1.2rem', 
+                    fontWeight: 900, 
+                    color: '#ffffff',
+                    textShadow: '0 0 12px rgba(255,215,0,0.5)',
+                    marginTop: '6px'
+                  }}>{rankUpCelebration.newRank}</span>
+                </div>
+              </div>
+
+              <p style={{ color: '#8a93c0', fontSize: '0.95rem', lineHeight: 1.5, margin: '0 0 10px 0' }}>
+                {isRtl 
+                  ? `تهانينا! لقد ارتفعت رتبتك من ${rankUpCelebration.oldRank} إلى ${rankUpCelebration.newRank}! استمر في التقدم والسيطرة على لوحة الصدارة.` 
+                  : `Incredible skill! You have promoted from ${rankUpCelebration.oldRank} to ${rankUpCelebration.newRank}! Keep climbing and dominate the leaderboards.`}
+              </p>
+
+              <button 
+                className="btn-cyber" 
+                style={{
+                  background: 'linear-gradient(135deg, #ffd700 0%, #d97706 100%)',
+                  boxShadow: '0 0 15px rgba(255, 215, 0, 0.4)',
+                  border: 'none',
+                  color: '#05060f',
+                  fontWeight: 800,
+                  fontSize: '1rem',
+                  padding: '12px 36px',
+                  borderRadius: '12px',
+                  cursor: 'pointer'
+                }}
+                onClick={() => { playSFX('click'); setRankUpCelebration(null); }}
+              >
+                {isRtl ? 'ادعاء النصر' : 'CLAIM GLORY'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* BADGE UNLOCK CELEBRATION OVERLAY */}
+        {unlockedBadge?.show && (() => {
+          const badge = BADGES_METADATA.find(b => b.key === unlockedBadge.key);
+          if (!badge) return null;
+          return (
+            <div style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              width: '100vw',
+              height: '100vh',
+              backgroundColor: 'rgba(5, 6, 10, 0.95)',
+              backdropFilter: 'blur(15px)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1002,
+              animation: 'fadeIn 0.5s ease-out'
+            }}>
+              {/* Pulsing cyan background rays */}
+              <div style={{
+                position: 'absolute',
+                width: '450px',
+                height: '450px',
+                background: 'radial-gradient(circle, rgba(0, 242, 254, 0.15) 0%, transparent 70%)',
+                filter: 'blur(30px)',
+                pointerEvents: 'none',
+                animation: 'pulse-glow 3s infinite ease-in-out',
+                zIndex: 1
+              }} />
+
+              <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '24px',
+                zIndex: 2,
+                textAlign: 'center',
+                padding: '40px',
+                backgroundColor: 'rgba(15, 18, 30, 0.65)',
+                border: '2px solid rgba(0, 242, 254, 0.25)',
+                borderRadius: '24px',
+                boxShadow: '0 0 50px rgba(0, 242, 254, 0.15)',
+                maxWidth: '450px',
+                boxSizing: 'border-box'
+              }} className="glass-panel">
+                <span style={{ 
+                  fontSize: '5rem', 
+                  filter: 'drop-shadow(0 0 15px rgba(0,242,254,0.4))',
+                  animation: 'float 3s ease-in-out infinite',
+                  display: 'inline-block'
+                }}>
+                  {badge.icon}
+                </span>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <span style={{
+                    fontSize: '0.9rem',
+                    fontWeight: 'bold',
+                    color: '#00f2fe',
+                    letterSpacing: '1.5px',
+                    textTransform: 'uppercase'
+                  }}>
+                    {isRtl ? 'تم فتح إنجاز جديد!' : 'NEW ACHIEVEMENT UNLOCKED!'}
+                  </span>
+                  
+                  <h1 style={{
+                    fontSize: '2.5rem',
+                    fontWeight: 900,
+                    color: '#ffffff',
+                    textShadow: '0 0 15px rgba(0, 242, 254, 0.6)',
+                    margin: '0'
+                  }} className="text-glow">
+                    {isRtl ? badge.name.ar : badge.name.en}
+                  </h1>
+                </div>
+
+                <p style={{
+                  fontSize: '1rem',
+                  color: '#a0aec0',
+                  margin: '0',
+                  lineHeight: 1.5,
+                  maxWidth: '320px'
+                }}>
+                  {isRtl ? badge.desc.ar : badge.desc.en}
+                </p>
+
+                <button 
+                  style={{
+                    marginTop: '12px',
+                    padding: '12px 32px',
+                    background: 'linear-gradient(135deg, #00f2fe 0%, #4facfe 100%)',
+                    border: 'none',
+                    borderRadius: '12px',
+                    color: '#ffffff',
+                    fontWeight: 'bold',
+                    fontSize: '1rem',
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 15px rgba(0, 242, 254, 0.3)'
+                  }}
+                  onClick={() => {
+                    playSFX('click');
+                    setUnlockedBadge(null);
+                  }}
+                >
+                  {isRtl ? 'رائع!' : 'Awesome!'}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
       </div>
     </div>
   );
@@ -7385,6 +8881,16 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: 'none',
     fontSize: '1.2rem',
     cursor: 'pointer'
+  },
+  shopBtn: {
+    background: 'none',
+    border: 'none',
+    fontSize: '1.2rem',
+    cursor: 'pointer',
+    padding: '4px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   rankBadgeCard: {
     display: 'flex',

@@ -1138,6 +1138,29 @@ export async function handleTournamentMatchCompletion(roomId: string, winnerId: 
           .eq('id', finalWinnerId);
       }
 
+      // Award Tournament King badge if the winner has 0 losses
+      const { data: participant } = await supabaseAdmin
+        .from('tournament_participants')
+        .select('losses')
+        .eq('tournament_id', tournamentId)
+        .eq('user_id', finalWinnerId)
+        .single();
+      
+      if (participant && Number(participant.losses || 0) === 0) {
+        const { data: badge } = await supabaseAdmin
+          .from('badges')
+          .select('id')
+          .eq('key', 'tournament_king')
+          .single();
+        if (badge) {
+          await supabaseAdmin
+            .from('badges_earned')
+            .insert({ user_id: finalWinnerId, badge_id: badge.id })
+            .select()
+            .maybeSingle();
+        }
+      }
+
       await supabaseAdmin
         .from('tournaments')
         .update({
