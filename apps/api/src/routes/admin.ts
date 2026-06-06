@@ -316,8 +316,53 @@ router.get('/security-logs', async (req, res) => {
       .order('timestamp', { ascending: false })
       .limit(100);
 
-    if (error) throw error;
     return res.json({ status: 'success', logs });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/v1/admin/metrics
+router.get('/metrics', async (req: AuthenticatedRequest, res) => {
+  try {
+    const io = req.app.get('io');
+    const activeMatches = req.app.get('activeMatches');
+
+    const activeConnections = io ? io.sockets.sockets.size : 0;
+    const activeRooms = activeMatches ? activeMatches.size : 0;
+    const uptime = process.uptime();
+    const memoryUsage = process.memoryUsage();
+    
+    // CPU usage percentage estimate
+    const startUsage = process.cpuUsage();
+    const startTime = Date.now();
+    while (Date.now() - startTime < 5) {}
+    
+    const endUsage = process.cpuUsage(startUsage);
+    const cpuUser = endUsage.user / 1000;
+    const cpuSystem = endUsage.system / 1000;
+    const cpuTotalMs = cpuUser + cpuSystem;
+    const elapsedMs = Date.now() - startTime;
+    const cpuUsagePct = elapsedMs > 0 ? (cpuTotalMs / elapsedMs) * 100 : 0;
+
+    const redisEnabled = !!process.env.REDIS_URL;
+
+    return res.json({
+      status: 'success',
+      metrics: {
+        activeConnections,
+        activeRooms,
+        uptime,
+        memoryUsage: {
+          rss: memoryUsage.rss,
+          heapTotal: memoryUsage.heapTotal,
+          heapUsed: memoryUsage.heapUsed,
+          external: memoryUsage.external
+        },
+        cpuUsagePct: parseFloat(cpuUsagePct.toFixed(2)),
+        redisEnabled
+      }
+    });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

@@ -202,6 +202,8 @@ interface ActiveMatch {
 }
 
 const activeMatches = new Map<string, ActiveMatch>();
+app.set('io', io);
+app.set('activeMatches', activeMatches);
 
 // Grace period timers for disconnected players (userId -> timeout)
 const disconnectTimers = new Map<string, NodeJS.Timeout>();

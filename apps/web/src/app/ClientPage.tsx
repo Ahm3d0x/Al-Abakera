@@ -15,6 +15,7 @@ import { SeasonTrackerPanel } from '../components/SeasonTrackerPanel';
 import { SettingsModal } from '../components/SettingsModal';
 import { getDeviceFingerprint } from '../lib/fingerprint';
 import { AdminModerationModal } from '../components/AdminModerationModal';
+import { OnboardingTutorial } from '../components/OnboardingTutorial';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:5000';
@@ -654,6 +655,7 @@ export default function ClientPage() {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [activeSeason, setActiveSeason] = useState<any>(null);
   const [daysRemaining, setDaysRemaining] = useState<number>(0);
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
 
   // Audio settings states
   const [sfxEnabled, setSfxEnabled] = useState<boolean>(true);
@@ -681,6 +683,10 @@ export default function ClientPage() {
       const storedRtl = window.localStorage.getItem('mindrace_rtl');
       if (storedRtl !== null) {
         setIsRtl(storedRtl === 'true');
+      }
+      const onboardingCompleted = window.localStorage.getItem('mindrace_onboarding_completed');
+      if (onboardingCompleted !== 'true') {
+        setShowOnboarding(true);
       }
     }
   }, [setIsRtl]);
@@ -5632,6 +5638,13 @@ export default function ClientPage() {
                       >
                         🛒
                       </button>
+                      <button 
+                        style={styles.shopBtn} 
+                        onClick={() => { playSFX('click'); setShowOnboarding(true); }}
+                        title={isRtl ? 'دليل اللعب والتعليمات' : 'Gameplay Guide & Tutorial'}
+                      >
+                        ❓
+                      </button>
                       {user.isAdmin && (
                         <button 
                           style={styles.shopBtn} 
@@ -9476,6 +9489,13 @@ Play MindRace and test your knowledge now! 🧠⚡`;
           isRtl={isRtl}
           setIsRtl={setIsRtl}
           playSFX={playSFX}
+        />
+
+        {/* ONBOARDING TUTORIAL */}
+        <OnboardingTutorial
+          isOpen={showOnboarding}
+          onClose={() => setShowOnboarding(false)}
+          isRtl={isRtl}
         />
 
         {/* ADMIN MODERATION MODAL */}
