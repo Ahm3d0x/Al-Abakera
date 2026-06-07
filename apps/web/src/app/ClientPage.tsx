@@ -944,6 +944,33 @@ export default function ClientPage() {
   const [packReviewRating, setPackReviewRating] = useState<number>(5);
   const [packReviewComment, setPackReviewComment] = useState<string>('');
 
+  // Creator Question Pack management states
+  const [editingQuestion, setEditingQuestion] = useState<any | null>(null);
+  const [addingQuestion, setAddingQuestion] = useState<boolean>(false);
+  const [importJsonOpen, setImportJsonOpen] = useState<boolean>(false);
+  const [importJsonText, setImportJsonText] = useState<string>('');
+  const [previewQuestions, setPreviewQuestions] = useState<any[]>([]);
+  const [previewOpen, setPreviewOpen] = useState<boolean>(false);
+  const [newQuestion, setNewQuestion] = useState<any>({
+    type: 'MULTIPLE_CHOICE',
+    body: '',
+    options: [
+      { id: 'a', text: '' },
+      { id: 'b', text: '' },
+      { id: 'c', text: '' },
+      { id: 'd', text: '' }
+    ],
+    correctAnswer: 'a',
+    orderingItems: ['', '', '', ''],
+    matchingPairs: [
+      { leftId: 'l1', leftText: '', rightId: 'r1', rightText: '' },
+      { leftId: 'l2', leftText: '', rightId: 'r2', rightText: '' },
+      { leftId: 'l3', leftText: '', rightId: 'r3', rightText: '' }
+    ],
+    difficulty: 'Medium',
+    explanation: ''
+  });
+
   // Forms state
   const [tourName, setTourName] = useState('');
   const [tourDesc, setTourDesc] = useState('');
@@ -4392,6 +4419,369 @@ export default function ClientPage() {
     }
   }
 
+  // Question Pack Management Operations (Add, Edit, Delete, Copy Prompt, Import JSON)
+  const AI_QUESTION_PROMPT_TEMPLATE = `You are a professional trivia generator. Generate a JSON array of quiz questions on the following topic/description:
+Topic/Description: [Enter Topic Details here]
+
+IMPORTANT: You MUST return a valid JSON array only. Do not include markdown code block syntax (e.g. \`\`\`json) or any conversational text.
+
+Each object in the array must strictly match the following JSON structure:
+[
+  {
+    "type": "MULTIPLE_CHOICE" | "TRUE_FALSE" | "FILL_IN_THE_BLANK" | "ORDERING_QUESTION" | "MATCHING_QUESTION",
+    "difficulty": "Easy" | "Medium" | "Hard",
+    "body": {
+      "en": "Question text in English",
+      "ar": "نص السؤال باللغة العربية"
+    },
+    "explanation": {
+      "en": "Explanation of the correct answer in English",
+      "ar": "شرح الإجابة الصحيحة باللغة العربية"
+    },
+    
+    // For MULTIPLE_CHOICE:
+    "options": [
+      { "id": "a", "text": { "en": "Option A text", "ar": "نص الخيار أ" } },
+      { "id": "b", "text": { "en": "Option B text", "ar": "نص الخيار ب" } },
+      { "id": "c", "text": { "en": "Option C text", "ar": "نص الخيار ج" } },
+      { "id": "d", "text": { "en": "Option D text", "ar": "نص الخيار د" } }
+    ],
+    "correctAnswer": "a",
+
+    // For TRUE_FALSE:
+    "correctAnswer": "true" | "false",
+
+    // For FILL_IN_THE_BLANK:
+    "correctAnswer": {
+      "en": "correct answer in English",
+      "ar": "الإجابة الصحيحة بالعربية"
+    },
+
+    // For ORDERING_QUESTION:
+    "orderingItems": [
+      { "en": "First item (Top)", "ar": "العنصر الأول" },
+      { "en": "Second item", "ar": "العنصر الثاني" },
+      { "en": "Third item", "ar": "العنصر الثالث" },
+      { "en": "Fourth item (Bottom)", "ar": "العنصر الرابع" }
+    ],
+
+    // For MATCHING_QUESTION:
+    "matchingPairs": [
+      {
+        "left": { "en": "Key 1", "ar": "المفتاح 1" },
+        "right": { "en": "Value 1", "ar": "القيمة 1" }
+      },
+      {
+        "left": { "en": "Key 2", "ar": "المفتاح 2" },
+        "right": { "en": "Value 2", "ar": "القيمة 2" }
+      },
+      {
+        "left": { "en": "Key 3", "ar": "المفتاح 3" },
+        "right": { "en": "Value 3", "ar": "القيمة 3" }
+      }
+    ]
+  }
+]`;
+
+  const handleCopyPrompt = () => {
+    navigator.clipboard.writeText(AI_QUESTION_PROMPT_TEMPLATE);
+    triggerGamingAlert(isRtl ? 'تم نسخ برومبت الأسئلة بنجاح!' : 'AI Question prompt template copied!', 'success');
+  };
+
+  const normalizeImportedQuestions = (questions: any[]): any[] => {
+    return questions.map((q) => {
+      const type = q.type || 'MULTIPLE_CHOICE';
+      const difficulty = ['Easy', 'Medium', 'Hard'].includes(q.difficulty) ? q.difficulty : 'Medium';
+      const body = q.body || '';
+      const explanation = q.explanation || '';
+      const imageUrl = q.imageUrl || q.image_url || '';
+
+      const normalized: any = {
+        type,
+        difficulty,
+        body,
+        explanation,
+        imageUrl
+      };
+
+      if (type === 'MULTIPLE_CHOICE') {
+        const rawOptions = q.options || [];
+        const formattedOptions = rawOptions.map((opt: any, optIdx: number) => {
+          const optId = String.fromCharCode(97 + optIdx);
+          if (typeof opt === 'string') {
+            return { id: optId, text: opt };
+          } else if (opt && typeof opt === 'object') {
+            return { id: opt.id || optId, text: opt.text || '' };
+          }
+          return { id: optId, text: '' };
+        });
+
+        let corrAns = q.correctAnswer || q.correct_answer || 'a';
+        if (typeof corrAns === 'string' && corrAns.length > 1) {
+          const matchedOpt = formattedOptions.find((o: any) => 
+            (typeof o.text === 'string' && o.text.trim().toLowerCase() === corrAns.trim().toLowerCase()) ||
+            (typeof o.text === 'object' && (
+              String(o.text.en || '').trim().toLowerCase() === corrAns.trim().toLowerCase() ||
+              String(o.text.ar || '').trim().toLowerCase() === corrAns.trim().toLowerCase()
+            ))
+          );
+          if (matchedOpt) {
+            corrAns = matchedOpt.id;
+          }
+        }
+
+        normalized.options = formattedOptions;
+        normalized.correctAnswer = corrAns;
+      } 
+      else if (type === 'TRUE_FALSE') {
+        let corrAns = String(q.correctAnswer || q.correct_answer || 'true').trim().toLowerCase();
+        if (corrAns !== 'true' && corrAns !== 'false') {
+          corrAns = 'true';
+        }
+        normalized.correctAnswer = corrAns;
+        normalized.options = [];
+      } 
+      else if (type === 'FILL_IN_THE_BLANK') {
+        normalized.correctAnswer = q.correctAnswer || q.correct_answer || '';
+        normalized.options = [];
+      } 
+      else if (type === 'ORDERING_QUESTION') {
+        const items = q.orderingItems || q.ordering_items || [];
+        const formattedOptions = items.map((item: any, itemIdx: number) => {
+          const itemId = String(itemIdx + 1);
+          if (typeof item === 'string') {
+            return { id: itemId, text: item };
+          } else if (item && typeof item === 'object') {
+            return { id: item.id || itemId, text: item.text || item };
+          }
+          return { id: itemId, text: '' };
+        });
+        normalized.options = formattedOptions;
+        normalized.orderingItems = formattedOptions.map((o: any) => o.id);
+        normalized.correctAnswer = normalized.orderingItems;
+      } 
+      else if (type === 'MATCHING_QUESTION') {
+        const pairs = q.matchingPairs || q.matching_pairs || [];
+        const formattedPairs = pairs.map((pair: any, pairIdx: number) => {
+          const lId = `l${pairIdx + 1}`;
+          const rId = `r${pairIdx + 1}`;
+          return {
+            leftId: pair.leftId || lId,
+            leftText: pair.leftText || pair.left || '',
+            rightId: pair.rightId || rId,
+            rightText: pair.rightText || pair.right || ''
+          };
+        });
+        normalized.matchingPairs = formattedPairs;
+        normalized.correctAnswer = formattedPairs;
+      }
+
+      return normalized;
+    });
+  };
+
+  const handleParseJsonImport = () => {
+    if (!importJsonText.trim()) {
+      triggerGamingAlert(isRtl ? 'الرجاء إدخال كود JSON أولاً' : 'Please enter JSON text first', 'warning');
+      return;
+    }
+
+    try {
+      let parsed = JSON.parse(importJsonText.trim());
+      if (!Array.isArray(parsed)) {
+        parsed = [parsed];
+      }
+
+      const normalized = normalizeImportedQuestions(parsed);
+      if (normalized.length === 0) {
+        throw new Error('No valid questions found in JSON.');
+      }
+
+      setPreviewQuestions(normalized);
+      setPreviewOpen(true);
+      setImportJsonOpen(false);
+      setImportJsonText('');
+    } catch (e: any) {
+      console.error(e);
+      triggerGamingAlert(
+        isRtl 
+          ? `فشل في تحليل JSON: ${e.message || 'تنسيق غير صالح'}` 
+          : `JSON Parse Failed: ${e.message || 'Invalid format'}`, 
+        'error'
+      );
+    }
+  };
+
+  async function handleAddSingleQuestion(questionPayload: any) {
+    if (!selectedPack) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      // Normalize payloads like CREATE
+      const qData: any = {
+        type: questionPayload.type,
+        body: questionPayload.body,
+        difficulty: questionPayload.difficulty,
+        explanation: questionPayload.explanation,
+      };
+
+      if (questionPayload.imageUrl) qData.imageUrl = questionPayload.imageUrl;
+
+      if (questionPayload.type === 'MULTIPLE_CHOICE') {
+        qData.options = questionPayload.options.filter((o: any) => o.text.trim() !== '');
+        qData.correctAnswer = questionPayload.correctAnswer;
+      } else if (questionPayload.type === 'TRUE_FALSE') {
+        qData.correctAnswer = questionPayload.correctAnswer;
+      } else if (questionPayload.type === 'FILL_IN_THE_BLANK') {
+        qData.correctAnswer = questionPayload.correctAnswer;
+      } else if (questionPayload.type === 'ORDERING_QUESTION') {
+        qData.options = questionPayload.orderingItems.map((text: string, idx: number) => ({ id: String(idx + 1), text }));
+        qData.orderingItems = questionPayload.orderingItems.map((_: any, idx: number) => String(idx + 1));
+        qData.correctAnswer = qData.orderingItems;
+      } else if (questionPayload.type === 'MATCHING_QUESTION') {
+        qData.matchingPairs = questionPayload.matchingPairs.filter((p: any) => p.leftText.trim() !== '' && p.rightText.trim() !== '');
+        qData.correctAnswer = qData.matchingPairs;
+      }
+
+      const res = await fetch(`${API_URL}/api/v1/packs/${selectedPack.pack.id}/questions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(qData)
+      });
+
+      if (res.ok) {
+        triggerGamingAlert(isRtl ? 'تم إضافة السؤال بنجاح!' : 'Question added successfully!', 'success');
+        setAddingQuestion(false);
+        await fetchPackDetails(selectedPack.pack.id);
+      } else {
+        const err = await res.json();
+        triggerGamingAlert(err.error || 'Failed to add question', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      triggerGamingAlert('Error adding question', 'error');
+    }
+  }
+
+  async function handleEditQuestionSubmit(qId: string, questionPayload: any) {
+    if (!selectedPack) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      const qData: any = {
+        type: questionPayload.type,
+        body: questionPayload.body,
+        difficulty: questionPayload.difficulty,
+        explanation: questionPayload.explanation,
+      };
+
+      if (questionPayload.imageUrl) qData.imageUrl = questionPayload.imageUrl;
+
+      if (questionPayload.type === 'MULTIPLE_CHOICE') {
+        qData.options = questionPayload.options.filter((o: any) => o.text.trim() !== '');
+        qData.correctAnswer = questionPayload.correctAnswer;
+      } else if (questionPayload.type === 'TRUE_FALSE') {
+        qData.correctAnswer = questionPayload.correctAnswer;
+      } else if (questionPayload.type === 'FILL_IN_THE_BLANK') {
+        qData.correctAnswer = questionPayload.correctAnswer;
+      } else if (questionPayload.type === 'ORDERING_QUESTION') {
+        qData.options = questionPayload.orderingItems.map((text: string, idx: number) => ({ id: String(idx + 1), text }));
+        qData.orderingItems = questionPayload.orderingItems.map((_: any, idx: number) => String(idx + 1));
+        qData.correctAnswer = qData.orderingItems;
+      } else if (questionPayload.type === 'MATCHING_QUESTION') {
+        qData.matchingPairs = questionPayload.matchingPairs.filter((p: any) => p.leftText.trim() !== '' && p.rightText.trim() !== '');
+        qData.correctAnswer = qData.matchingPairs;
+      }
+
+      const res = await fetch(`${API_URL}/api/v1/packs/${selectedPack.pack.id}/questions/${qId}`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(qData)
+      });
+
+      if (res.ok) {
+        triggerGamingAlert(isRtl ? 'تم تعديل السؤال بنجاح!' : 'Question updated successfully!', 'success');
+        setEditingQuestion(null);
+        await fetchPackDetails(selectedPack.pack.id);
+      } else {
+        const err = await res.json();
+        triggerGamingAlert(err.error || 'Failed to update question', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      triggerGamingAlert('Error updating question', 'error');
+    }
+  }
+
+  async function handleDeleteQuestion(qId: string) {
+    if (!confirm(isRtl ? 'هل أنت متأكد من حذف هذا السؤال؟' : 'Are you sure you want to delete this question?')) return;
+    if (!selectedPack) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      const res = await fetch(`${API_URL}/api/v1/packs/${selectedPack.pack.id}/questions/${qId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (res.ok) {
+        triggerGamingAlert(isRtl ? 'تم حذف السؤال!' : 'Question deleted successfully!', 'success');
+        await fetchPackDetails(selectedPack.pack.id);
+      } else {
+        const err = await res.json();
+        triggerGamingAlert(err.error || 'Failed to delete question', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function handleConfirmBatchImport() {
+    if (!selectedPack || previewQuestions.length === 0) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      const res = await fetch(`${API_URL}/api/v1/packs/${selectedPack.pack.id}/questions/batch`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ questions: previewQuestions })
+      });
+
+      if (res.ok) {
+        triggerGamingAlert(
+          isRtl 
+            ? `تم استيراد ${previewQuestions.length} أسئلة بنجاح!` 
+            : `Successfully imported ${previewQuestions.length} questions!`, 
+          'success'
+        );
+        setPreviewOpen(false);
+        setPreviewQuestions([]);
+        await fetchPackDetails(selectedPack.pack.id);
+      } else {
+        const err = await res.json();
+        triggerGamingAlert(err.error || 'Failed to import batch questions', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      triggerGamingAlert('Error batch importing questions', 'error');
+    }
+  }
+
   const renderPacksView = () => {
     if (creatingPack) {
       return (
@@ -4985,22 +5375,174 @@ export default function ClientPage() {
                 </button>
               )}
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <h4 style={{ margin: '4px 0', fontSize: '0.85rem', color: '#ffffff', fontWeight: 'bold' }}>
-                  {isRtl ? 'قائمة الأسئلة' : 'Questions List'}
-                </h4>
-                {questions?.map((q: any, qIdx: number) => (
-                  <div key={q.id || qIdx} style={{ padding: '10px', backgroundColor: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem' }}>
-                      <span style={{ color: '#00f2fe', fontWeight: 'bold' }}>Q{qIdx + 1} ({q.type})</span>
-                      <span style={{ color: '#8a93c0' }}>{q.difficulty}</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                  <h4 style={{ margin: '4px 0', fontSize: '0.85rem', color: '#ffffff', fontWeight: 'bold' }}>
+                    {isRtl ? 'قائمة الأسئلة' : 'Questions List'} ({questions?.length || 0})
+                  </h4>
+                  {isCreator && (
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button
+                        onClick={() => {
+                          setNewQuestion({
+                            type: 'MULTIPLE_CHOICE',
+                            body: { en: '', ar: '' },
+                            options: [
+                              { id: 'a', text: { en: '', ar: '' } },
+                              { id: 'b', text: { en: '', ar: '' } },
+                              { id: 'c', text: { en: '', ar: '' } },
+                              { id: 'd', text: { en: '', ar: '' } }
+                            ],
+                            correctAnswer: 'a',
+                            orderingItems: [{ en: '', ar: '' }, { en: '', ar: '' }, { en: '', ar: '' }, { en: '', ar: '' }],
+                            matchingPairs: [
+                              { leftId: 'l1', leftText: { en: '', ar: '' }, rightId: 'r1', rightText: { en: '', ar: '' } },
+                              { leftId: 'l2', leftText: { en: '', ar: '' }, rightId: 'r2', rightText: { en: '', ar: '' } },
+                              { leftId: 'l3', leftText: { en: '', ar: '' }, rightId: 'r3', rightText: { en: '', ar: '' } }
+                            ],
+                            difficulty: 'Medium',
+                            explanation: { en: '', ar: '' }
+                          });
+                          setAddingQuestion(true);
+                        }}
+                        style={{
+                          padding: '3px 8px',
+                          backgroundColor: 'rgba(0, 242, 254, 0.1)',
+                          border: '1px solid #00f2fe',
+                          color: '#00f2fe',
+                          borderRadius: '4px',
+                          fontSize: '0.7rem',
+                          cursor: 'pointer',
+                          fontWeight: 'bold'
+                        }}
+                      >
+                        ➕ {isRtl ? 'سؤال جديد' : 'New Q'}
+                      </button>
+                      <button
+                        onClick={() => setImportJsonOpen(true)}
+                        style={{
+                          padding: '3px 8px',
+                          backgroundColor: 'rgba(0, 255, 135, 0.1)',
+                          border: '1px solid #00ff87',
+                          color: '#00ff87',
+                          borderRadius: '4px',
+                          fontSize: '0.7rem',
+                          cursor: 'pointer',
+                          fontWeight: 'bold'
+                        }}
+                      >
+                        📥 {isRtl ? 'استيراد JSON' : 'Import JSON'}
+                      </button>
+                      <button
+                        onClick={handleCopyPrompt}
+                        style={{
+                          padding: '3px 8px',
+                          backgroundColor: 'rgba(255, 215, 0, 0.1)',
+                          border: '1px solid #ffd700',
+                          color: '#ffd700',
+                          borderRadius: '4px',
+                          fontSize: '0.7rem',
+                          cursor: 'pointer',
+                          fontWeight: 'bold'
+                        }}
+                        title={isRtl ? 'نسخ برومبت الذكاء الاصطناعي لتوليد الأسئلة' : 'Copy AI Prompt Template'}
+                      >
+                        📋 {isRtl ? 'برومبت AI' : 'AI Prompt'}
+                      </button>
                     </div>
+                  )}
+                </div>
+
+                {questions?.map((q: any, qIdx: number) => (
+                  <div key={q.id || qIdx} style={{ padding: '12px', backgroundColor: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '6px', position: 'relative' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.7rem' }}>
+                      <span style={{ color: '#00f2fe', fontWeight: 'bold' }}>Q{qIdx + 1} ({q.type})</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ color: '#8a93c0', marginRight: '6px' }}>{q.difficulty}</span>
+                        {isCreator && (
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <button
+                              onClick={() => {
+                                const mappedQ = {
+                                  id: q.id,
+                                  type: q.type,
+                                  body: typeof q.body === 'object' ? q.body : { en: q.body, ar: '' },
+                                  imageUrl: q.imageUrl || q.image_url || '',
+                                  options: q.options || [
+                                    { id: 'a', text: { en: '', ar: '' } },
+                                    { id: 'b', text: { en: '', ar: '' } },
+                                    { id: 'c', text: { en: '', ar: '' } },
+                                    { id: 'd', text: { en: '', ar: '' } }
+                                  ],
+                                  correctAnswer: q.correctAnswer || q.correct_answer || 'a',
+                                  orderingItems: q.orderingItems || (q.options?.map((o: any) => o.text) || [{ en: '', ar: '' }, { en: '', ar: '' }, { en: '', ar: '' }, { en: '', ar: '' }]),
+                                  matchingPairs: q.matchingPairs || [
+                                    { leftId: 'l1', leftText: { en: '', ar: '' }, rightId: 'r1', rightText: { en: '', ar: '' } },
+                                    { leftId: 'l2', leftText: { en: '', ar: '' }, rightId: 'r2', rightText: { en: '', ar: '' } },
+                                    { leftId: 'l3', leftText: { en: '', ar: '' }, rightId: 'r3', rightText: { en: '', ar: '' } }
+                                  ],
+                                  difficulty: q.difficulty || 'Medium',
+                                  explanation: typeof q.explanation === 'object' ? q.explanation : { en: q.explanation || '', ar: '' }
+                                };
+                                setEditingQuestion(mappedQ);
+                              }}
+                              style={{
+                                padding: '2px 6px',
+                                backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                                border: '1px solid rgba(255, 255, 255, 0.1)',
+                                color: '#ffffff',
+                                borderRadius: '3px',
+                                fontSize: '0.65rem',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              ✏️ {isRtl ? 'تعديل' : 'Edit'}
+                            </button>
+                            <button
+                              onClick={() => handleDeleteQuestion(q.id)}
+                              style={{
+                                padding: '2px 6px',
+                                backgroundColor: 'rgba(255, 59, 92, 0.1)',
+                                border: '1px solid #ff3b5c',
+                                color: '#ff3b5c',
+                                borderRadius: '3px',
+                                fontSize: '0.65rem',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              🗑️ {isRtl ? 'حذف' : 'Delete'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
                     <p style={{ margin: '4px 0', fontSize: '0.8rem', color: '#ffffff' }}>{getLocalizedText(q.body)}</p>
                     
+                    {q.options && q.options.length > 0 && q.type !== 'ORDERING_QUESTION' && (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', marginTop: '2px' }}>
+                        {q.options.map((o: any) => (
+                          <span key={o.id} style={{ fontSize: '0.75rem', color: '#8a93c0' }}>
+                            • {o.id.toUpperCase()}: {getLocalizedText(o.text)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
                     {isCreator && (
                       <div style={{ marginTop: '4px', padding: '6px', backgroundColor: 'rgba(0, 255, 135, 0.04)', border: '1px solid rgba(0, 255, 135, 0.1)', borderRadius: '4px', fontSize: '0.75rem', color: '#00ff87' }}>
                         <span>🔑 {isRtl ? 'الإجابة النموذجية:' : 'Answer Key:'} </span>
-                        <strong>{String(q.correctAnswer || q.correct_answer || '')}</strong>
+                        <strong>
+                          {q.type === 'MATCHING_QUESTION' 
+                            ? (q.matchingPairs || q.matching_pairs || []).map((p: any) => `${getLocalizedText(p.leftText)} ↔ ${getLocalizedText(p.rightText)}`).join(', ')
+                            : q.type === 'ORDERING_QUESTION'
+                            ? (q.orderingItems || []).map((id: string) => {
+                                const opt = q.options?.find((o: any) => o.id === id);
+                                return opt ? getLocalizedText(opt.text) : id;
+                              }).join(' → ')
+                            : String(q.correctAnswer || q.correct_answer || '')
+                          }
+                        </strong>
                       </div>
                     )}
                     {q.explanation && (
@@ -5011,6 +5553,820 @@ export default function ClientPage() {
                   </div>
                 ))}
               </div>
+
+              {/* MODALS DEFINITIONS */}
+              {/* ADD / EDIT SINGLE QUESTION MODAL */}
+              {(addingQuestion || editingQuestion) && (() => {
+                const isEdit = !!editingQuestion;
+                const q = isEdit ? editingQuestion : newQuestion;
+                const setQ = isEdit ? setEditingQuestion : setNewQuestion;
+
+                const updateQ = (fields: any) => {
+                  setQ((prev: any) => ({ ...prev, ...fields }));
+                };
+
+                const handleSave = () => {
+                  const bodyText = typeof q.body === 'object' ? (q.body.en || q.body.ar || '') : q.body;
+                  if (!bodyText.trim()) {
+                    triggerGamingAlert(isRtl ? 'الرجاء إدخال نص السؤال' : 'Please enter question text', 'warning');
+                    return;
+                  }
+
+                  if (isEdit) {
+                    handleEditQuestionSubmit(q.id, q);
+                  } else {
+                    handleAddSingleQuestion(q);
+                  }
+                };
+
+                const modalOverlayStyle: React.CSSProperties = {
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  width: '100vw',
+                  height: '100vh',
+                  backgroundColor: 'rgba(5, 6, 10, 0.9)',
+                  backdropFilter: 'blur(8px)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 3000,
+                  boxSizing: 'border-box',
+                  padding: '16px'
+                };
+
+                const modalContentStyle: React.CSSProperties = {
+                  width: '100%',
+                  maxWidth: '500px',
+                  backgroundColor: '#0f1220',
+                  border: '1px solid rgba(0, 242, 254, 0.15)',
+                  boxShadow: '0 10px 40px rgba(0, 242, 254, 0.08), inset 0 0 10px rgba(255,255,255,0.01)',
+                  borderRadius: '16px',
+                  padding: '24px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  maxHeight: '90vh'
+                };
+
+                return (
+                  <div style={modalOverlayStyle} onClick={() => { setAddingQuestion(false); setEditingQuestion(null); }}>
+                    <div style={modalContentStyle} onClick={(e) => e.stopPropagation()}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '8px' }}>
+                        <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#00f2fe', margin: 0 }}>
+                          {isEdit 
+                            ? (isRtl ? '✏️ تعديل السؤال' : '✏️ Edit Question') 
+                            : (isRtl ? '➕ إضافة سؤال جديد' : '➕ Add New Question')}
+                        </h3>
+                        <button 
+                          onClick={() => { setAddingQuestion(false); setEditingQuestion(null); }}
+                          style={{ background: 'none', border: 'none', color: '#8a93c0', cursor: 'pointer', fontSize: '1.2rem' }}
+                        >✕</button>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', flex: 1, paddingRight: '4px', minHeight: 0 }}>
+                        {/* Question Type */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'نوع السؤال' : 'Question Type'}</label>
+                          <select
+                            value={q.type}
+                            onChange={(e: any) => {
+                              const newType = e.target.value;
+                              const defaults: any = { type: newType };
+                              if (newType === 'MULTIPLE_CHOICE') {
+                                defaults.options = [{ id: 'a', text: { en: '', ar: '' } }, { id: 'b', text: { en: '', ar: '' } }, { id: 'c', text: { en: '', ar: '' } }, { id: 'd', text: { en: '', ar: '' } }];
+                                defaults.correctAnswer = 'a';
+                              } else if (newType === 'TRUE_FALSE') {
+                                defaults.options = [];
+                                defaults.correctAnswer = 'true';
+                              } else if (newType === 'FILL_IN_THE_BLANK') {
+                                defaults.options = [];
+                                defaults.correctAnswer = { en: '', ar: '' };
+                              } else if (newType === 'ORDERING_QUESTION') {
+                                defaults.orderingItems = [{ en: '', ar: '' }, { en: '', ar: '' }, { en: '', ar: '' }, { en: '', ar: '' }];
+                                defaults.correctAnswer = [];
+                              } else if (newType === 'MATCHING_QUESTION') {
+                                defaults.matchingPairs = [
+                                  { leftId: 'l1', leftText: { en: '', ar: '' }, rightId: 'r1', rightText: { en: '', ar: '' } },
+                                  { leftId: 'l2', leftText: { en: '', ar: '' }, rightId: 'r2', rightText: { en: '', ar: '' } },
+                                  { leftId: 'l3', leftText: { en: '', ar: '' }, rightId: 'r3', rightText: { en: '', ar: '' } }
+                                ];
+                                defaults.correctAnswer = [];
+                              }
+                              updateQ(defaults);
+                            }}
+                            style={{ padding: '8px', borderRadius: '6px', backgroundColor: '#0b0d1a', border: '1px solid rgba(255, 255, 255, 0.08)', color: '#ffffff', fontSize: '0.8rem' }}
+                          >
+                            <option value="MULTIPLE_CHOICE">Multiple Choice</option>
+                            <option value="TRUE_FALSE">True/False</option>
+                            <option value="FILL_IN_THE_BLANK">Fill in the Blank</option>
+                            <option value="ORDERING_QUESTION">Ordering</option>
+                            <option value="MATCHING_QUESTION">Matching</option>
+                          </select>
+                        </div>
+
+                        {/* Difficulty */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'الصعوبة' : 'Difficulty'}</label>
+                          <select
+                            value={q.difficulty}
+                            onChange={(e: any) => updateQ({ difficulty: e.target.value })}
+                            style={{ padding: '8px', borderRadius: '6px', backgroundColor: '#0b0d1a', border: '1px solid rgba(255, 255, 255, 0.08)', color: '#ffffff', fontSize: '0.8rem' }}
+                          >
+                            <option value="Easy">Easy</option>
+                            <option value="Medium">Medium</option>
+                            <option value="Hard">Hard</option>
+                          </select>
+                        </div>
+
+                        {/* Localized Body */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'السؤال بالإنجليزية' : 'Question (English)'}</label>
+                          <textarea
+                            placeholder="Question text in English..."
+                            value={typeof q.body === 'object' ? (q.body.en || '') : q.body}
+                            onChange={(e) => {
+                              const text = e.target.value;
+                              if (typeof q.body === 'object') {
+                                updateQ({ body: { ...q.body, en: text } });
+                              } else {
+                                updateQ({ body: { en: text, ar: '' } });
+                              }
+                            }}
+                            style={{ padding: '8px', borderRadius: '6px', backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.8rem', minHeight: '40px', resize: 'none' }}
+                          />
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'السؤال بالعربية' : 'Question (Arabic)'}</label>
+                          <textarea
+                            placeholder="نص السؤال باللغة العربية..."
+                            value={typeof q.body === 'object' ? (q.body.ar || '') : ''}
+                            onChange={(e) => {
+                              const text = e.target.value;
+                              if (typeof q.body === 'object') {
+                                updateQ({ body: { ...q.body, ar: text } });
+                              } else {
+                                updateQ({ body: { en: typeof q.body === 'string' ? q.body : '', ar: text } });
+                              }
+                            }}
+                            style={{ padding: '8px', borderRadius: '6px', backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.8rem', minHeight: '40px', resize: 'none' }}
+                          />
+                        </div>
+
+                        {/* Conditional Inputs based on Type */}
+                        {q.type === 'MULTIPLE_CHOICE' && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                            <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'الخيارات المتاحة والإجابة الصحيحة' : 'Options & Correct Answer'}</label>
+                            {(q.options || []).map((opt: any, oIdx: number) => {
+                              const isCorrect = q.correctAnswer === opt.id;
+                              return (
+                                <div key={opt.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '8px', backgroundColor: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '6px' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#00f2fe' }}>{isRtl ? `الخيار ${opt.id.toUpperCase()}` : `Option ${opt.id.toUpperCase()}`}</span>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: '#00ff87', cursor: 'pointer' }}>
+                                      <input
+                                        type="radio"
+                                        name="correct-option-single"
+                                        checked={isCorrect}
+                                        onChange={() => updateQ({ correctAnswer: opt.id })}
+                                      />
+                                      {isRtl ? 'إجابة صحيحة' : 'Correct'}
+                                    </label>
+                                  </div>
+                                  <input
+                                    type="text"
+                                    placeholder="Option in English"
+                                    value={typeof opt.text === 'object' ? (opt.text.en || '') : opt.text}
+                                    onChange={(e) => {
+                                      const newOpts = [...q.options];
+                                      const textVal = typeof opt.text === 'object' ? { ...opt.text, en: e.target.value } : { en: e.target.value, ar: '' };
+                                      newOpts[oIdx] = { ...opt, text: textVal };
+                                      updateQ({ options: newOpts });
+                                    }}
+                                    style={{ padding: '6px', borderRadius: '4px', backgroundColor: '#05060f', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                  />
+                                  <input
+                                    type="text"
+                                    placeholder="الخيار بالعربية"
+                                    value={typeof opt.text === 'object' ? (opt.text.ar || '') : ''}
+                                    onChange={(e) => {
+                                      const newOpts = [...q.options];
+                                      const textVal = typeof opt.text === 'object' ? { ...opt.text, ar: e.target.value } : { en: typeof opt.text === 'string' ? opt.text : '', ar: e.target.value };
+                                      newOpts[oIdx] = { ...opt, text: textVal };
+                                      updateQ({ options: newOpts });
+                                    }}
+                                    style={{ padding: '6px', borderRadius: '4px', backgroundColor: '#05060f', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {q.type === 'TRUE_FALSE' && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'الإجابة الصحيحة' : 'Correct Answer'}</label>
+                            <select
+                              value={q.correctAnswer}
+                              onChange={(e) => updateQ({ correctAnswer: e.target.value })}
+                              style={{ padding: '8px', borderRadius: '6px', backgroundColor: '#0b0d1a', border: '1px solid rgba(255, 255, 255, 0.08)', color: '#ffffff', fontSize: '0.8rem' }}
+                            >
+                              <option value="true">{isRtl ? 'صح' : 'True'}</option>
+                              <option value="false">{isRtl ? 'خطأ' : 'False'}</option>
+                            </select>
+                          </div>
+                        )}
+
+                        {q.type === 'FILL_IN_THE_BLANK' && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'الإجابة الصحيحة' : 'Correct Answer'}</label>
+                            <input
+                              type="text"
+                              placeholder="Correct answer in English"
+                              value={typeof q.correctAnswer === 'object' ? (q.correctAnswer.en || '') : q.correctAnswer}
+                              onChange={(e) => {
+                                const text = e.target.value;
+                                if (typeof q.correctAnswer === 'object') {
+                                  updateQ({ correctAnswer: { ...q.correctAnswer, en: text } });
+                                } else {
+                                  updateQ({ correctAnswer: { en: text, ar: '' } });
+                                }
+                              }}
+                              style={{ padding: '8px', borderRadius: '6px', backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.8rem' }}
+                            />
+                            <input
+                              type="text"
+                              placeholder="الإجابة الصحيحة بالعربية"
+                              value={typeof q.correctAnswer === 'object' ? (q.correctAnswer.ar || '') : ''}
+                              onChange={(e) => {
+                                const text = e.target.value;
+                                if (typeof q.correctAnswer === 'object') {
+                                  updateQ({ correctAnswer: { ...q.correctAnswer, ar: text } });
+                                } else {
+                                  updateQ({ correctAnswer: { en: typeof q.correctAnswer === 'string' ? q.correctAnswer : '', ar: text } });
+                                }
+                              }}
+                              style={{ padding: '8px', borderRadius: '6px', backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.8rem' }}
+                            />
+                          </div>
+                        )}
+
+                        {q.type === 'ORDERING_QUESTION' && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'رتب العناصر بالترتيب الصحيح (من الأعلى للأسفل)' : 'Enter items in correct order (Top to Bottom)'}</label>
+                            {(q.orderingItems || []).map((item: any, orderIdx: number) => (
+                              <div key={orderIdx} style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '8px', backgroundColor: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '6px' }}>
+                                <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#ffd700' }}>{orderIdx + 1}</span>
+                                <input
+                                  type="text"
+                                  placeholder="Item text in English"
+                                  value={typeof item === 'object' ? (item.en || '') : item}
+                                  onChange={(e) => {
+                                    const newItems = [...q.orderingItems];
+                                    const val = typeof item === 'object' ? { ...item, en: e.target.value } : { en: e.target.value, ar: '' };
+                                    newItems[orderIdx] = val;
+                                    updateQ({ orderingItems: newItems });
+                                  }}
+                                  style={{ padding: '6px', borderRadius: '4px', backgroundColor: '#05060f', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                />
+                                <input
+                                  type="text"
+                                  placeholder="العنصر بالعربية"
+                                  value={typeof item === 'object' ? (item.ar || '') : ''}
+                                  onChange={(e) => {
+                                    const newItems = [...q.orderingItems];
+                                    const val = typeof item === 'object' ? { ...item, ar: e.target.value } : { en: typeof item === 'string' ? item : '', ar: e.target.value };
+                                    newItems[orderIdx] = val;
+                                    updateQ({ orderingItems: newItems });
+                                  }}
+                                  style={{ padding: '6px', borderRadius: '4px', backgroundColor: '#05060f', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {q.type === 'MATCHING_QUESTION' && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'أدخل أزواج التوصيل المتطابقة' : 'Enter matching pairs'}</label>
+                            {(q.matchingPairs || []).map((pair: any, pairIdx: number) => (
+                              <div key={pairIdx} style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '8px', backgroundColor: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '8px' }}>
+                                <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#00ff87' }}>{isRtl ? `الزوج ${pairIdx + 1}` : `Pair ${pairIdx + 1}`}</span>
+                                
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                                  <input
+                                    type="text"
+                                    placeholder="Left term (EN)"
+                                    value={typeof pair.leftText === 'object' ? (pair.leftText.en || '') : pair.leftText}
+                                    onChange={(e) => {
+                                      const newPairs = [...q.matchingPairs];
+                                      const leftVal = typeof pair.leftText === 'object' ? { ...pair.leftText, en: e.target.value } : { en: e.target.value, ar: '' };
+                                      newPairs[pairIdx] = { ...pair, leftText: leftVal };
+                                      updateQ({ matchingPairs: newPairs });
+                                    }}
+                                    style={{ padding: '6px', borderRadius: '4px', backgroundColor: '#05060f', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                  />
+                                  <input
+                                    type="text"
+                                    placeholder="Right definition (EN)"
+                                    value={typeof pair.rightText === 'object' ? (pair.rightText.en || '') : pair.rightText}
+                                    onChange={(e) => {
+                                      const newPairs = [...q.matchingPairs];
+                                      const rightVal = typeof pair.rightText === 'object' ? { ...pair.rightText, en: e.target.value } : { en: e.target.value, ar: '' };
+                                      newPairs[pairIdx] = { ...pair, rightText: rightVal };
+                                      updateQ({ matchingPairs: newPairs });
+                                    }}
+                                    style={{ padding: '6px', borderRadius: '4px', backgroundColor: '#05060f', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                  />
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                                  <input
+                                    type="text"
+                                    placeholder="المصطلح بالعربية"
+                                    value={typeof pair.leftText === 'object' ? (pair.leftText.ar || '') : ''}
+                                    onChange={(e) => {
+                                      const newPairs = [...q.matchingPairs];
+                                      const leftVal = typeof pair.leftText === 'object' ? { ...pair.leftText, ar: e.target.value } : { en: typeof pair.leftText === 'string' ? pair.leftText : '', ar: e.target.value };
+                                      newPairs[pairIdx] = { ...pair, leftText: leftVal };
+                                      updateQ({ matchingPairs: newPairs });
+                                    }}
+                                    style={{ padding: '6px', borderRadius: '4px', backgroundColor: '#05060f', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                  />
+                                  <input
+                                    type="text"
+                                    placeholder="التعريف بالعربية"
+                                    value={typeof pair.rightText === 'object' ? (pair.rightText.ar || '') : ''}
+                                    onChange={(e) => {
+                                      const newPairs = [...q.matchingPairs];
+                                      const rightVal = typeof pair.rightText === 'object' ? { ...pair.rightText, ar: e.target.value } : { en: typeof pair.rightText === 'string' ? pair.rightText : '', ar: e.target.value };
+                                      newPairs[pairIdx] = { ...pair, rightText: rightVal };
+                                      updateQ({ matchingPairs: newPairs });
+                                    }}
+                                    style={{ padding: '6px', borderRadius: '4px', backgroundColor: '#05060f', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Localized Explanation */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
+                          <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'شرح الحل بالإنجليزية' : 'Explanation (English)'}</label>
+                          <textarea
+                            placeholder="Explanation in English..."
+                            value={typeof q.explanation === 'object' ? (q.explanation.en || '') : q.explanation}
+                            onChange={(e) => {
+                              const text = e.target.value;
+                              if (typeof q.explanation === 'object') {
+                                updateQ({ explanation: { ...q.explanation, en: text } });
+                              } else {
+                                updateQ({ explanation: { en: text, ar: '' } });
+                              }
+                            }}
+                            style={{ padding: '8px', borderRadius: '6px', backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.8rem', minHeight: '40px', resize: 'none' }}
+                          />
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <label style={{ fontSize: '0.7rem', color: '#8a93c0' }}>{isRtl ? 'شرح الحل بالعربية' : 'Explanation (Arabic)'}</label>
+                          <textarea
+                            placeholder="شرح الحل باللغة العربية..."
+                            value={typeof q.explanation === 'object' ? (q.explanation.ar || '') : ''}
+                            onChange={(e) => {
+                              const text = e.target.value;
+                              if (typeof q.explanation === 'object') {
+                                updateQ({ explanation: { ...q.explanation, ar: text } });
+                              } else {
+                                updateQ({ explanation: { en: typeof q.explanation === 'string' ? q.explanation : '', ar: text } });
+                              }
+                            }}
+                            style={{ padding: '8px', borderRadius: '6px', backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.8rem', minHeight: '40px', resize: 'none' }}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '10px', marginTop: '16px', justifyContent: 'flex-end', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '12px' }}>
+                        <button 
+                          type="button"
+                          onClick={() => { setAddingQuestion(false); setEditingQuestion(null); }}
+                          style={{ padding: '8px 16px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.08)', backgroundColor: 'transparent', color: '#8a93c0', cursor: 'pointer', fontSize: '0.8rem' }}
+                        >
+                          {isRtl ? 'إلغاء' : 'Cancel'}
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={handleSave}
+                          style={{ padding: '8px 20px', borderRadius: '6px', border: 'none', backgroundColor: '#00f2fe', color: '#05060f', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.8rem' }}
+                        >
+                          {isRtl ? 'تأكيد الحفظ' : 'Confirm Save'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* IMPORT JSON TEXT AREA MODAL */}
+              {importJsonOpen && (() => {
+                const modalOverlayStyle: React.CSSProperties = {
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  width: '100vw',
+                  height: '100vh',
+                  backgroundColor: 'rgba(5, 6, 10, 0.9)',
+                  backdropFilter: 'blur(8px)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 3000,
+                  boxSizing: 'border-box',
+                  padding: '16px'
+                };
+
+                const modalContentStyle: React.CSSProperties = {
+                  width: '100%',
+                  maxWidth: '500px',
+                  backgroundColor: '#0f1220',
+                  border: '1px solid rgba(0, 242, 254, 0.15)',
+                  boxShadow: '0 10px 40px rgba(0, 242, 254, 0.08), inset 0 0 10px rgba(255,255,255,0.01)',
+                  borderRadius: '16px',
+                  padding: '24px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  maxHeight: '90vh'
+                };
+
+                return (
+                  <div style={modalOverlayStyle} onClick={() => setImportJsonOpen(false)}>
+                    <div style={modalContentStyle} onClick={(e) => e.stopPropagation()}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '8px' }}>
+                        <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#00ff87', margin: 0 }}>
+                          {isRtl ? '📥 استيراد أسئلة من كود JSON' : '📥 Import Questions via JSON'}
+                        </h3>
+                        <button 
+                          onClick={() => setImportJsonOpen(false)}
+                          style={{ background: 'none', border: 'none', color: '#8a93c0', cursor: 'pointer', fontSize: '1.2rem' }}
+                        >✕</button>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1, minHeight: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.75rem', color: '#8a93c0' }}>
+                            {isRtl ? 'الصق كود الـ JSON هنا للتحليل والاستعراض:' : 'Paste your JSON code here to parse & preview:'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={handleCopyPrompt}
+                            style={{ padding: '4px 8px', fontSize: '0.65rem', backgroundColor: 'rgba(255,215,0,0.1)', border: '1px solid #ffd700', color: '#ffd700', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                          >
+                            📋 {isRtl ? 'نسخ البرومبت المطلوب للـ AI' : 'Copy AI Prompt'}
+                          </button>
+                        </div>
+
+                        <textarea
+                          placeholder={isRtl ? 'الصق كود الـ JSON هنا...' : 'Paste JSON array here...'}
+                          value={importJsonText}
+                          onChange={(e) => setImportJsonText(e.target.value)}
+                          style={{ flex: 1, padding: '12px', borderRadius: '8px', backgroundColor: 'rgba(5, 6, 10, 0.5)', border: '1px solid rgba(255, 255, 255, 0.08)', color: '#00ff87', fontSize: '0.75rem', fontFamily: 'monospace', resize: 'none' }}
+                        />
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '10px', marginTop: '16px', justifyContent: 'flex-end', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '12px' }}>
+                        <button 
+                          type="button"
+                          onClick={() => setImportJsonOpen(false)}
+                          style={{ padding: '8px 16px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.08)', backgroundColor: 'transparent', color: '#8a93c0', cursor: 'pointer', fontSize: '0.8rem' }}
+                        >
+                          {isRtl ? 'إلغاء' : 'Cancel'}
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={handleParseJsonImport}
+                          style={{ padding: '8px 20px', borderRadius: '6px', border: 'none', backgroundColor: '#00ff87', color: '#05060f', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.8rem' }}
+                        >
+                          {isRtl ? 'معاينة وتحليل الأسئلة' : 'Preview & Parse'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* BATCH IMPORT PREVIEW & EDITING MODAL */}
+              {previewOpen && (() => {
+                const modalOverlayStyle: React.CSSProperties = {
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  width: '100vw',
+                  height: '100vh',
+                  backgroundColor: 'rgba(5, 6, 10, 0.9)',
+                  backdropFilter: 'blur(8px)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 3000,
+                  boxSizing: 'border-box',
+                  padding: '16px'
+                };
+
+                const modalContentStyle: React.CSSProperties = {
+                  width: '100%',
+                  maxWidth: '700px',
+                  backgroundColor: '#0f1220',
+                  border: '1px solid rgba(0, 242, 254, 0.15)',
+                  boxShadow: '0 10px 40px rgba(0, 242, 254, 0.08), inset 0 0 10px rgba(255,255,255,0.01)',
+                  borderRadius: '16px',
+                  padding: '24px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  maxHeight: '90vh'
+                };
+
+                return (
+                  <div style={modalOverlayStyle} onClick={() => { setPreviewOpen(false); setPreviewQuestions([]); }}>
+                    <div style={modalContentStyle} onClick={(e) => e.stopPropagation()}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '8px' }}>
+                        <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#00ff87', margin: 0 }}>
+                          {isRtl ? `🔍 معاينة وتعديل الأسئلة المستوردة (${previewQuestions.length})` : `🔍 Preview & Edit Imported Questions (${previewQuestions.length})`}
+                        </h3>
+                        <button 
+                          onClick={() => { setPreviewOpen(false); setPreviewQuestions([]); }}
+                          style={{ background: 'none', border: 'none', color: '#8a93c0', cursor: 'pointer', fontSize: '1.2rem' }}
+                        >✕</button>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', flex: 1, paddingRight: '4px', minHeight: 0 }}>
+                        {previewQuestions.map((q, idx) => {
+                          const updatePreviewQ = (fields: any) => {
+                            setPreviewQuestions(prev => prev.map((item, i) => i === idx ? { ...item, ...fields } : item));
+                          };
+
+                          return (
+                            <div 
+                              key={idx} 
+                              style={{
+                                padding: '16px',
+                                backgroundColor: 'rgba(255, 255, 255, 0.01)',
+                                border: '1px solid rgba(0, 255, 135, 0.12)',
+                                borderRadius: '8px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '10px'
+                              }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#00ff87' }}>#{idx + 1} ({q.type})</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewQuestions(prev => prev.filter((_, i) => i !== idx))}
+                                  style={{ padding: '2px 6px', backgroundColor: 'rgba(255,59,92,0.1)', border: '1px solid #ff3b5c', color: '#ff3b5c', borderRadius: '4px', fontSize: '0.65rem', cursor: 'pointer' }}
+                                >
+                                  🗑️ {isRtl ? 'حذف من الاستيراد' : 'Remove'}
+                                </button>
+                              </div>
+
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  <label style={{ fontSize: '0.65rem', color: '#8a93c0' }}>{isRtl ? 'نوع السؤال' : 'Question Type'}</label>
+                                  <select
+                                    value={q.type}
+                                    onChange={(e: any) => {
+                                      const newType = e.target.value;
+                                      const defaults: any = { type: newType };
+                                      if (newType === 'MULTIPLE_CHOICE') {
+                                        defaults.options = [{ id: 'a', text: { en: '', ar: '' } }, { id: 'b', text: { en: '', ar: '' } }, { id: 'c', text: { en: '', ar: '' } }, { id: 'd', text: { en: '', ar: '' } }];
+                                        defaults.correctAnswer = 'a';
+                                      } else if (newType === 'TRUE_FALSE') {
+                                        defaults.options = [];
+                                        defaults.correctAnswer = 'true';
+                                      } else if (newType === 'FILL_IN_THE_BLANK') {
+                                        defaults.options = [];
+                                        defaults.correctAnswer = { en: '', ar: '' };
+                                      } else if (newType === 'ORDERING_QUESTION') {
+                                        defaults.orderingItems = [{ en: '', ar: '' }, { en: '', ar: '' }, { en: '', ar: '' }, { en: '', ar: '' }];
+                                        defaults.correctAnswer = [];
+                                      } else if (newType === 'MATCHING_QUESTION') {
+                                        defaults.matchingPairs = [
+                                          { leftId: 'l1', leftText: { en: '', ar: '' }, rightId: 'r1', rightText: { en: '', ar: '' } },
+                                          { leftId: 'l2', leftText: { en: '', ar: '' }, rightId: 'r2', rightText: { en: '', ar: '' } },
+                                          { leftId: 'l3', leftText: { en: '', ar: '' }, rightId: 'r3', rightText: { en: '', ar: '' } }
+                                        ];
+                                        defaults.correctAnswer = [];
+                                      }
+                                      updatePreviewQ(defaults);
+                                    }}
+                                    style={{ padding: '4px', borderRadius: '4px', backgroundColor: '#0b0d1a', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                  >
+                                    <option value="MULTIPLE_CHOICE">Multiple Choice</option>
+                                    <option value="TRUE_FALSE">True/False</option>
+                                    <option value="FILL_IN_THE_BLANK">Fill in the Blank</option>
+                                    <option value="ORDERING_QUESTION">Ordering</option>
+                                    <option value="MATCHING_QUESTION">Matching</option>
+                                  </select>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  <label style={{ fontSize: '0.65rem', color: '#8a93c0' }}>{isRtl ? 'الصعوبة' : 'Difficulty'}</label>
+                                  <select
+                                    value={q.difficulty}
+                                    onChange={(e: any) => updatePreviewQ({ difficulty: e.target.value })}
+                                    style={{ padding: '4px', borderRadius: '4px', backgroundColor: '#0b0d1a', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                  >
+                                    <option value="Easy">Easy</option>
+                                    <option value="Medium">Medium</option>
+                                    <option value="Hard">Hard</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              {/* Localized Body inputs */}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <label style={{ fontSize: '0.65rem', color: '#8a93c0' }}>{isRtl ? 'السؤال بالإنجليزية' : 'Question (English)'}</label>
+                                <input
+                                  type="text"
+                                  value={typeof q.body === 'object' ? (q.body.en || '') : q.body}
+                                  onChange={(e) => {
+                                    const text = e.target.value;
+                                    if (typeof q.body === 'object') {
+                                      updatePreviewQ({ body: { ...q.body, en: text } });
+                                    } else {
+                                      updatePreviewQ({ body: { en: text, ar: '' } });
+                                    }
+                                  }}
+                                  style={{ padding: '6px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                />
+                              </div>
+
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <label style={{ fontSize: '0.65rem', color: '#8a93c0' }}>{isRtl ? 'السؤال بالعربية' : 'Question (Arabic)'}</label>
+                                <input
+                                  type="text"
+                                  value={typeof q.body === 'object' ? (q.body.ar || '') : ''}
+                                  onChange={(e) => {
+                                    const text = e.target.value;
+                                    if (typeof q.body === 'object') {
+                                      updatePreviewQ({ body: { ...q.body, ar: text } });
+                                    } else {
+                                      updatePreviewQ({ body: { en: typeof q.body === 'string' ? q.body : '', ar: text } });
+                                    }
+                                  }}
+                                  style={{ padding: '6px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                />
+                              </div>
+
+                              {/* Type-Specific preview fields */}
+                              {q.type === 'MULTIPLE_CHOICE' && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '6px', backgroundColor: 'rgba(255,255,255,0.01)', borderRadius: '4px' }}>
+                                  {(q.options || []).map((opt: any, oIdx: number) => (
+                                    <div key={opt.id} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <input
+                                        type="radio"
+                                        name={`preview-correct-${idx}`}
+                                        checked={q.correctAnswer === opt.id}
+                                        onChange={() => updatePreviewQ({ correctAnswer: opt.id })}
+                                      />
+                                      <span style={{ fontSize: '0.7rem', color: '#8a93c0', width: '15px' }}>{opt.id.toUpperCase()}</span>
+                                      <input
+                                        type="text"
+                                        placeholder="EN option text"
+                                        value={typeof opt.text === 'object' ? (opt.text.en || '') : opt.text}
+                                        onChange={(e) => {
+                                          const newOpts = [...q.options];
+                                          const textObj = typeof opt.text === 'object' ? { ...opt.text, en: e.target.value } : { en: e.target.value, ar: '' };
+                                          newOpts[oIdx] = { ...opt, text: textObj };
+                                          updatePreviewQ({ options: newOpts });
+                                        }}
+                                        style={{ flex: 1, padding: '4px', fontSize: '0.7rem', backgroundColor: '#05060f', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', borderRadius: '3px' }}
+                                      />
+                                      <input
+                                        type="text"
+                                        placeholder="الخيار بالعربية"
+                                        value={typeof opt.text === 'object' ? (opt.text.ar || '') : ''}
+                                        onChange={(e) => {
+                                          const newOpts = [...q.options];
+                                          const textObj = typeof opt.text === 'object' ? { ...opt.text, ar: e.target.value } : { en: typeof opt.text === 'string' ? opt.text : '', ar: e.target.value };
+                                          newOpts[oIdx] = { ...opt, text: textObj };
+                                          updatePreviewQ({ options: newOpts });
+                                        }}
+                                        style={{ flex: 1, padding: '4px', fontSize: '0.7rem', backgroundColor: '#05060f', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', borderRadius: '3px' }}
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {q.type === 'TRUE_FALSE' && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  <label style={{ fontSize: '0.65rem', color: '#8a93c0' }}>{isRtl ? 'الإجابة الصحيحة' : 'Correct Answer'}</label>
+                                  <select
+                                    value={q.correctAnswer}
+                                    onChange={(e) => updatePreviewQ({ correctAnswer: e.target.value })}
+                                    style={{ padding: '4px', borderRadius: '4px', backgroundColor: '#0b0d1a', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                  >
+                                    <option value="true">{isRtl ? 'صح' : 'True'}</option>
+                                    <option value="false">{isRtl ? 'خطأ' : 'False'}</option>
+                                  </select>
+                                </div>
+                              )}
+
+                              {q.type === 'FILL_IN_THE_BLANK' && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                  <label style={{ fontSize: '0.65rem', color: '#8a93c0' }}>{isRtl ? 'الإجابة الصحيحة' : 'Correct Answer'}</label>
+                                  <input
+                                    type="text"
+                                    placeholder="Correct answer in English"
+                                    value={typeof q.correctAnswer === 'object' ? (q.correctAnswer.en || '') : q.correctAnswer}
+                                    onChange={(e) => {
+                                      const text = e.target.value;
+                                      if (typeof q.correctAnswer === 'object') {
+                                        updatePreviewQ({ correctAnswer: { ...q.correctAnswer, en: text } });
+                                      } else {
+                                        updatePreviewQ({ correctAnswer: { en: text, ar: '' } });
+                                      }
+                                    }}
+                                    style={{ padding: '6px', borderRadius: '4px', backgroundColor: '#05060f', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                  />
+                                  <input
+                                    type="text"
+                                    placeholder="الإجابة الصحيحة بالعربية"
+                                    value={typeof q.correctAnswer === 'object' ? (q.correctAnswer.ar || '') : ''}
+                                    onChange={(e) => {
+                                      const text = e.target.value;
+                                      if (typeof q.correctAnswer === 'object') {
+                                        updatePreviewQ({ correctAnswer: { ...q.correctAnswer, ar: text } });
+                                      } else {
+                                        updatePreviewQ({ correctAnswer: { en: typeof q.correctAnswer === 'string' ? q.correctAnswer : '', ar: text } });
+                                      }
+                                    }}
+                                    style={{ padding: '6px', borderRadius: '4px', backgroundColor: '#05060f', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                  />
+                                </div>
+                              )}
+
+                              {/* Localized Explanation inputs */}
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  <label style={{ fontSize: '0.65rem', color: '#8a93c0' }}>{isRtl ? 'الشرح (EN)' : 'Explanation (EN)'}</label>
+                                  <input
+                                    type="text"
+                                    value={typeof q.explanation === 'object' ? (q.explanation.en || '') : q.explanation}
+                                    onChange={(e) => {
+                                      const text = e.target.value;
+                                      if (typeof q.explanation === 'object') {
+                                        updatePreviewQ({ explanation: { ...q.explanation, en: text } });
+                                      } else {
+                                        updatePreviewQ({ explanation: { en: text, ar: '' } });
+                                      }
+                                    }}
+                                    style={{ padding: '6px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                  />
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  <label style={{ fontSize: '0.65rem', color: '#8a93c0' }}>{isRtl ? 'الشرح (AR)' : 'Explanation (AR)'}</label>
+                                  <input
+                                    type="text"
+                                    value={typeof q.explanation === 'object' ? (q.explanation.ar || '') : ''}
+                                    onChange={(e) => {
+                                      const text = e.target.value;
+                                      if (typeof q.explanation === 'object') {
+                                        updatePreviewQ({ explanation: { ...q.explanation, ar: text } });
+                                      } else {
+                                        updatePreviewQ({ explanation: { en: typeof q.explanation === 'string' ? q.explanation : '', ar: text } });
+                                      }
+                                    }}
+                                    style={{ padding: '6px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', color: '#ffffff', fontSize: '0.75rem' }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '10px', marginTop: '16px', justifyContent: 'flex-end', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '12px' }}>
+                        <button 
+                          type="button"
+                          onClick={() => { setPreviewOpen(false); setPreviewQuestions([]); }}
+                          style={{ padding: '8px 16px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.08)', backgroundColor: 'transparent', color: '#8a93c0', cursor: 'pointer', fontSize: '0.8rem' }}
+                        >
+                          {isRtl ? 'إلغاء' : 'Cancel'}
+                        </button>
+                        <button 
+                          type="button"
+                          disabled={previewQuestions.length === 0}
+                          onClick={handleConfirmBatchImport}
+                          style={{ padding: '8px 20px', borderRadius: '6px', border: 'none', backgroundColor: '#00ff87', color: '#05060f', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.8rem' }}
+                        >
+                          {isRtl ? `تأكيد رفع الأسئلة (${previewQuestions.length})` : `Confirm Import (${previewQuestions.length} Qs)`}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
 
               {pack.isPublic && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '10px' }}>

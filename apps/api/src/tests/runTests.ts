@@ -2,6 +2,7 @@ import { gradeAnswer } from '../lib/grading';
 import { Question } from '@mind-race/shared';
 import { spawn, ChildProcess } from 'child_process';
 import { io as Client } from 'socket.io-client';
+import { supabaseAdmin } from '../lib/supabase';
 
 let totalTests = 0;
 let passedTests = 0;
@@ -170,12 +171,15 @@ async function runAll() {
   // Integration Tests: WebSockets Game Flow
   // ==========================================
   
-  await test('Integration: Server socket connection and guest login', async () => {
+  await test('Integration: Gateway Socket Connection & Creator Question Pack CRUD', async () => {
     let serverProc: ChildProcess | null = null;
+    let createdPackId: string | null = null;
+    const createdQuestionIds: string[] = [];
+    
     try {
       console.log('🔄 Launching API Gateway in test mode...');
       serverProc = spawn('npx', ['ts-node', 'src/index.ts'], {
-        env: { ...process.env, PORT: '5999', REDIS_URL: '' },
+        env: { ...process.env, PORT: '5999', REDIS_URL: '', NODE_ENV: 'test' },
         shell: true
       });
 
@@ -201,7 +205,7 @@ async function runAll() {
 
       console.log('🌐 Connected to test API Gateway. Verifying connection...');
 
-      // Connect a mock guest socket client
+      // 1. Connect a mock guest socket client
       const socket = Client('http://localhost:5999', {
         transports: ['websocket'],
         forceNew: true,
@@ -230,8 +234,150 @@ async function runAll() {
         });
       });
 
-      console.log('✅ Guest client connected successfully.');
+      console.log('✅ Guest client connected successfully. Testing Creator Pack CRUD...');
+
+      // 2. Get current user profile ID from API using test token bypass
+      const meRes = await fetch('http://localhost:5999/api/v1/users/me', {
+        headers: { Authorization: 'Bearer mock-test-token' }
+      });
+      expect(meRes.status).toBe(200);
+      const meData: any = await meRes.json();
+      const userId = meData.user.id;
+      expect(typeof userId).toBe('string');
+
+      console.log(`👤 Running pack tests as user: ${userId}. Creating test pack...`);
+
+      // 3. Direct DB insert: Create a test pack
+      const { data: testPack, error: packErr } = await supabaseAdmin
+        .from('question_packs')
+        .insert({
+          creator_id: userId,
+          title: 'Test Integration Pack',
+          description: 'Used for endpoint integration testing',
+          category: 'Science',
+          is_public: false
+        })
+        .select()
+        .single();
+
+      if (packErr || !testPack) {
+        throw new Error('Failed to seed test pack: ' + packErr?.message);
+      }
+      createdPackId = testPack.id;
+
+      // 4. Test API POST /api/v1/packs/:id/questions (Add single question)
+      console.log('🧪 Testing POST /api/v1/packs/:id/questions...');
+      const addRes = await fetch(`http://localhost:5999/api/v1/packs/${createdPackId}/questions`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer mock-test-token',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          type: 'MULTIPLE_CHOICE',
+          body: { en: 'What is 2+2?', ar: 'ما هو 2+2؟' },
+          options: [
+            { id: 'a', text: { en: '3', ar: '3' } },
+            { id: 'b', text: { en: '4', ar: '4' } }
+          ],
+          correctAnswer: 'b',
+          difficulty: 'Easy',
+          explanation: { en: 'Because 2+2 is 4.', ar: 'لأن 2+2 تساوي 4.' }
+        })
+      });
+      expect(addRes.status).toBe(201);
+      const addedQuestion: any = await addRes.json();
+      expect(addedQuestion.type).toBe('MULTIPLE_CHOICE');
+      expect(addedQuestion.body.en).toBe('What is 2+2?');
+      const addedQId = addedQuestion.id;
+      createdQuestionIds.push(addedQId);
+
+      // Verify linking table
+      const { data: linkData } = await supabaseAdmin
+        .from('question_pack_items')
+        .select('*')
+        .eq('pack_id', createdPackId)
+        .eq('question_id', addedQId)
+        .maybeSingle();
+      expect(!!linkData).toBe(true);
+
+      // 5. Test API PUT /api/v1/packs/:id/questions/:questionId (Update question)
+      console.log('🧪 Testing PUT /api/v1/packs/:id/questions/:questionId...');
+      const updateRes = await fetch(`http://localhost:5999/api/v1/packs/${createdPackId}/questions/${addedQId}`, {
+        method: 'PUT',
+        headers: {
+          Authorization: 'Bearer mock-test-token',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          body: { en: 'What is 2+2 updated?', ar: 'ما هو 2+2 معدل؟' }
+        })
+      });
+      expect(updateRes.status).toBe(200);
+      const updatedQ: any = await updateRes.json();
+      expect(updatedQ.body.en).toBe('What is 2+2 updated?');
+
+      // 6. Test API POST /api/v1/packs/:id/questions/batch (Batch add questions)
+      console.log('🧪 Testing POST /api/v1/packs/:id/questions/batch...');
+      const batchRes = await fetch(`http://localhost:5999/api/v1/packs/${createdPackId}/questions/batch`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer mock-test-token',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          questions: [
+            {
+              type: 'TRUE_FALSE',
+              body: { en: 'The sky is blue', ar: 'السماء زرقاء' },
+              correctAnswer: 'true',
+              difficulty: 'Easy'
+            },
+            {
+              type: 'FILL_IN_THE_BLANK',
+              body: { en: 'Water formula is [blank]', ar: 'صيغة الماء هي [blank]' },
+              correctAnswer: { en: 'h2o', ar: 'h2o' },
+              difficulty: 'Medium'
+            }
+          ]
+        })
+      });
+      expect(batchRes.status).toBe(201);
+      const batchData: any = await batchRes.json();
+      expect(Array.isArray(batchData)).toBe(true);
+      expect(batchData.length).toBe(2);
+      batchData.forEach((bq: any) => {
+        createdQuestionIds.push(bq.id);
+      });
+
+      // 7. Test API DELETE /api/v1/packs/:id/questions/:questionId (Delete question)
+      console.log('🧪 Testing DELETE /api/v1/packs/:id/questions/:questionId...');
+      const deleteRes = await fetch(`http://localhost:5999/api/v1/packs/${createdPackId}/questions/${addedQId}`, {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer mock-test-token' }
+      });
+      expect(deleteRes.status).toBe(200);
+
+      // Verify deleted from DB
+      const { data: deletedLink } = await supabaseAdmin
+        .from('question_pack_items')
+        .select('*')
+        .eq('pack_id', createdPackId)
+        .eq('question_id', addedQId)
+        .maybeSingle();
+      expect(deletedLink).toBe(null);
+
+      console.log('✅ Pack CRUD & batch import endpoints tested successfully.');
+
     } finally {
+      // Cleanup
+      console.log('🧹 Cleaning up integration test resources...');
+      if (createdPackId) {
+        await supabaseAdmin.from('question_packs').delete().eq('id', createdPackId);
+      }
+      if (createdQuestionIds.length > 0) {
+        await supabaseAdmin.from('questions').delete().in('id', createdQuestionIds);
+      }
       if (serverProc) {
         console.log('🧹 Shutting down test API Gateway...');
         serverProc.kill('SIGINT');

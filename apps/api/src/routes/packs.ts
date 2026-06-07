@@ -398,4 +398,300 @@ router.post('/:id/reviews', requireAuth as any, async (req: AuthenticatedRequest
   }
 });
 
+// 7. Add a question to a pack
+router.post('/:id/questions', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const userId = req.profile?.id;
+  const {
+    type,
+    body,
+    imageUrl,
+    options,
+    correctAnswer,
+    orderingItems,
+    matchingPairs,
+    codingTestCases,
+    difficulty,
+    explanation,
+  } = req.body;
+
+  if (!type || !body) {
+    return res.status(400).json({ error: 'Question type and body are required' });
+  }
+
+  try {
+    // 1. Fetch pack to verify ownership
+    const { data: pack, error: fetchErr } = await supabaseAdmin
+      .from('question_packs')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchErr || !pack) {
+      return res.status(404).json({ error: 'Question pack not found' });
+    }
+
+    if (pack.creator_id !== userId) {
+      return res.status(403).json({ error: 'Access denied: Only the pack creator can add questions' });
+    }
+
+    // 2. Insert question
+    const { data: insertedQ, error: qErr } = await supabaseAdmin
+      .from('questions')
+      .insert({
+        type,
+        category: pack.category, // Inherit category from pack
+        body,
+        image_url: imageUrl || null,
+        options: options || null,
+        correct_answer: correctAnswer || null,
+        ordering_items: orderingItems || null,
+        matching_pairs: matchingPairs || null,
+        coding_test_cases: codingTestCases || null,
+        difficulty: difficulty || 'Medium',
+        explanation: explanation || null,
+        created_by: userId
+      })
+      .select()
+      .single();
+
+    if (qErr || !insertedQ) {
+      return res.status(500).json({ error: 'Failed to create question: ' + qErr?.message });
+    }
+
+    // 3. Link question to pack
+    const { error: linkErr } = await supabaseAdmin
+      .from('question_pack_items')
+      .insert({
+        pack_id: id,
+        question_id: insertedQ.id
+      });
+
+    if (linkErr) {
+      // Clean up question if linking fails
+      await supabaseAdmin.from('questions').delete().eq('id', insertedQ.id);
+      return res.status(500).json({ error: 'Failed to link question to pack: ' + linkErr.message });
+    }
+
+    return res.status(201).json(insertedQ);
+  } catch (err) {
+    console.error('Add question to pack error:', err);
+    return res.status(500).json({ error: 'Internal server error adding question to pack' });
+  }
+});
+
+// 8. Update a question in a pack
+router.put('/:id/questions/:questionId', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  const { id, questionId } = req.params;
+  const userId = req.profile?.id;
+  const updatePayload = req.body;
+
+  try {
+    // 1. Fetch pack to verify ownership
+    const { data: pack, error: fetchErr } = await supabaseAdmin
+      .from('question_packs')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchErr || !pack) {
+      return res.status(404).json({ error: 'Question pack not found' });
+    }
+
+    if (pack.creator_id !== userId) {
+      return res.status(403).json({ error: 'Access denied: Only the pack creator can edit questions' });
+    }
+
+    // 2. Verify link
+    const { data: link, error: linkErr } = await supabaseAdmin
+      .from('question_pack_items')
+      .select('*')
+      .eq('pack_id', id)
+      .eq('question_id', questionId)
+      .maybeSingle();
+
+    if (linkErr || !link) {
+      return res.status(404).json({ error: 'Question is not associated with this question pack' });
+    }
+
+    // 3. Map keys if they were passed camelCase (like correctAnswer or imageUrl)
+    const dbPayload: any = { ...updatePayload };
+    if (dbPayload.correctAnswer !== undefined) {
+      dbPayload.correct_answer = dbPayload.correctAnswer;
+      delete dbPayload.correctAnswer;
+    }
+    if (dbPayload.imageUrl !== undefined) {
+      dbPayload.image_url = dbPayload.imageUrl;
+      delete dbPayload.imageUrl;
+    }
+    if (dbPayload.orderingItems !== undefined) {
+      dbPayload.ordering_items = dbPayload.orderingItems;
+      delete dbPayload.orderingItems;
+    }
+    if (dbPayload.matchingPairs !== undefined) {
+      dbPayload.matching_pairs = dbPayload.matchingPairs;
+      delete dbPayload.matchingPairs;
+    }
+    if (dbPayload.codingTestCases !== undefined) {
+      dbPayload.coding_test_cases = dbPayload.codingTestCases;
+      delete dbPayload.codingTestCases;
+    }
+
+    // 4. Update question
+    const { data: updatedQ, error: qErr } = await supabaseAdmin
+      .from('questions')
+      .update({
+        ...dbPayload,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', questionId)
+      .select()
+      .single();
+
+    if (qErr || !updatedQ) {
+      return res.status(500).json({ error: 'Failed to update question: ' + qErr?.message });
+    }
+
+    return res.json(updatedQ);
+  } catch (err) {
+    console.error('Update question in pack error:', err);
+    return res.status(500).json({ error: 'Internal server error updating question in pack' });
+  }
+});
+
+// 9. Delete a question from a pack (and from questions table)
+router.delete('/:id/questions/:questionId', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  const { id, questionId } = req.params;
+  const userId = req.profile?.id;
+
+  try {
+    // 1. Fetch pack to verify ownership
+    const { data: pack, error: fetchErr } = await supabaseAdmin
+      .from('question_packs')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchErr || !pack) {
+      return res.status(404).json({ error: 'Question pack not found' });
+    }
+
+    if (pack.creator_id !== userId) {
+      return res.status(403).json({ error: 'Access denied: Only the pack creator can delete questions' });
+    }
+
+    // 2. Verify link
+    const { data: link, error: linkErr } = await supabaseAdmin
+      .from('question_pack_items')
+      .select('*')
+      .eq('pack_id', id)
+      .eq('question_id', questionId)
+      .maybeSingle();
+
+    if (linkErr || !link) {
+      return res.status(404).json({ error: 'Question is not associated with this question pack' });
+    }
+
+    // 3. Delete question (this cascades and deletes from question_pack_items)
+    const { error: deleteErr } = await supabaseAdmin
+      .from('questions')
+      .delete()
+      .eq('id', questionId);
+
+    if (deleteErr) {
+      return res.status(500).json({ error: 'Failed to delete question: ' + deleteErr.message });
+    }
+
+    return res.json({ status: 'success', message: 'Question deleted successfully' });
+  } catch (err) {
+    console.error('Delete question from pack error:', err);
+    return res.status(500).json({ error: 'Internal server error deleting question from pack' });
+  }
+});
+
+// 10. Batch add questions to a pack
+router.post('/:id/questions/batch', requireAuth as any, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const userId = req.profile?.id;
+  const { questions } = req.body;
+
+  if (!questions || !Array.isArray(questions) || questions.length === 0) {
+    return res.status(400).json({ error: 'Questions array is required and must not be empty' });
+  }
+
+  try {
+    // 1. Fetch pack to verify ownership
+    const { data: pack, error: fetchErr } = await supabaseAdmin
+      .from('question_packs')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchErr || !pack) {
+      return res.status(404).json({ error: 'Question pack not found' });
+    }
+
+    if (pack.creator_id !== userId) {
+      return res.status(403).json({ error: 'Access denied: Only the pack creator can batch import questions' });
+    }
+
+    const insertedQuestions = [];
+
+    // 2. Loop and insert each question and junction
+    for (const q of questions) {
+      const {
+        type,
+        body,
+        imageUrl,
+        options,
+        correctAnswer,
+        orderingItems,
+        matchingPairs,
+        codingTestCases,
+        difficulty,
+        explanation
+      } = q;
+
+      if (!type || !body) continue;
+
+      const { data: insertedQ, error: qErr } = await supabaseAdmin
+        .from('questions')
+        .insert({
+          type,
+          category: pack.category,
+          body,
+          image_url: imageUrl || null,
+          options: options || null,
+          correct_answer: correctAnswer || null,
+          ordering_items: orderingItems || null,
+          matching_pairs: matchingPairs || null,
+          coding_test_cases: codingTestCases || null,
+          difficulty: difficulty || 'Medium',
+          explanation: explanation || null,
+          created_by: userId
+        })
+        .select()
+        .single();
+
+      if (!qErr && insertedQ) {
+        insertedQuestions.push(insertedQ);
+
+        // Link
+        await supabaseAdmin
+          .from('question_pack_items')
+          .insert({
+            pack_id: id,
+            question_id: insertedQ.id
+          });
+      }
+    }
+
+    return res.status(201).json(insertedQuestions);
+  } catch (err) {
+    console.error('Batch add questions to pack error:', err);
+    return res.status(500).json({ error: 'Internal server error batch adding questions to pack' });
+  }
+});
+
 export default router;
+
