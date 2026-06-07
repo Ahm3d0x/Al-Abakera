@@ -8083,6 +8083,29 @@ Each object in the array must strictly match the following JSON structure:
 
   return (
     <div style={styles.appContainer} dir={isRtl ? 'rtl' : 'ltr'}>
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes snowfall {
+          0% { transform: translateY(-20px) rotate(0deg); opacity: 0; }
+          10% { opacity: 0.8; }
+          90% { opacity: 0.8; }
+          100% { transform: translateY(650px) rotate(360deg); opacity: 0; }
+        }
+        @keyframes shieldPulse {
+          0% { box-shadow: 0 0 4px rgba(0, 242, 254, 0.4), inset 0 0 4px rgba(0, 242, 254, 0.2); border-color: rgba(0, 242, 254, 0.3); }
+          50% { box-shadow: 0 0 16px rgba(0, 242, 254, 0.8), inset 0 0 10px rgba(0, 242, 254, 0.4); border-color: rgba(0, 242, 254, 0.9); }
+          100% { box-shadow: 0 0 4px rgba(0, 242, 254, 0.4), inset 0 0 4px rgba(0, 242, 254, 0.2); border-color: rgba(0, 242, 254, 0.3); }
+        }
+        @keyframes goldPulse {
+          0% { box-shadow: 0 0 4px rgba(255, 215, 0, 0.3); border-color: rgba(255, 215, 0, 0.2); }
+          50% { box-shadow: 0 0 18px rgba(255, 215, 0, 0.8); border-color: rgba(255, 215, 0, 0.9); }
+          100% { box-shadow: 0 0 4px rgba(255, 215, 0, 0.3); border-color: rgba(255, 215, 0, 0.2); }
+        }
+        @keyframes pulseGlow {
+          0% { transform: scale(1); opacity: 0.7; }
+          50% { transform: scale(1.1); opacity: 1; }
+          100% { transform: scale(1); opacity: 0.7; }
+        }
+      ` }} />
       <div style={styles.arenaFrame}>
         <div style={styles.ambientGrid}></div>
 
@@ -9673,6 +9696,60 @@ Each object in the array must strictly match the following JSON structure:
 
           return (
             <div style={styles.screenContainer}>
+              {/* FREEZE POWER-UP SCREEN OVERLAY */}
+              {activePowerUps.includes('FREEZE') && (
+                <>
+                  {/* Frost glassmorphic frame */}
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    border: '8px solid rgba(0, 242, 254, 0.35)',
+                    boxShadow: 'inset 0 0 25px rgba(0, 242, 254, 0.3)',
+                    borderRadius: '12px',
+                    pointerEvents: 'none',
+                    zIndex: 100,
+                    animation: 'shieldPulse 3s infinite'
+                  }} />
+                  {/* Snowflakes falling */}
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    overflow: 'hidden',
+                    pointerEvents: 'none',
+                    zIndex: 99
+                  }}>
+                    {Array.from({ length: 12 }).map((_, idx) => {
+                      const leftPos = (idx * 9) + 4; // distribute across width
+                      const duration = 3 + (idx % 3) * 1.5; // 3s to 6s
+                      const delay = (idx % 4) * 0.8; // 0s to 2.4s
+                      const size = 0.8 + (idx % 3) * 0.4; // 0.8rem to 1.6rem
+                      return (
+                        <span
+                          key={idx}
+                          style={{
+                            position: 'absolute',
+                            top: '-20px',
+                            left: `${leftPos}%`,
+                            color: '#e0f7fa',
+                            fontSize: `${size}rem`,
+                            opacity: 0.8,
+                            animation: `snowfall ${duration}s linear ${delay}s infinite`,
+                            fontFamily: 'serif'
+                          }}
+                        >
+                          ❄
+                        </span>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
               {/* FLOATING QUICK SIGNAL OVERLAY */}
               {floatingMessage && (
                 <div className="animate-float" style={{
@@ -9703,8 +9780,21 @@ Each object in the array must strictly match the following JSON structure:
               )}
 
               <div style={styles.hudBar}>
-                <div style={styles.hudTeamPanel}>
-                  <span style={styles.hudTeamName}>{leftTeamName}</span>
+                <div style={{
+                  ...styles.hudTeamPanel,
+                  border: activePowerUps.includes('SHIELD') ? '1.5px solid #00f2fe' : '1px solid transparent',
+                  borderRadius: '8px',
+                  padding: activePowerUps.includes('SHIELD') ? '4px 8px' : '0px',
+                  animation: activePowerUps.includes('SHIELD') ? 'shieldPulse 1.5s infinite' : 'none',
+                  transition: 'all 0.3s ease',
+                  backgroundColor: activePowerUps.includes('SHIELD') ? 'rgba(0, 242, 254, 0.05)' : 'transparent'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    {activePowerUps.includes('SHIELD') && (
+                      <span style={{ fontSize: '0.95rem', animation: 'pulseGlow 1.5s infinite', color: '#00f2fe' }}>🛡️</span>
+                    )}
+                    <span style={styles.hudTeamName}>{leftTeamName}</span>
+                  </div>
                   <span style={styles.hudTeamScore}>{leftTeamScore} pts</span>
                   {gameMode === 'SURVIVAL' && (
                     <div style={styles.heartsRow}>
@@ -9723,7 +9813,9 @@ Each object in the array must strictly match the following JSON structure:
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    flexShrink: 0
+                    flexShrink: 0,
+                    filter: activePowerUps.includes('FREEZE') ? 'drop-shadow(0 0 10px #00f2fe)' : 'none',
+                    transition: 'filter 0.3s ease'
                   }}>
                     <svg width="64" height="64" style={{ transform: 'rotate(-90deg)' }}>
                       <circle
@@ -9740,20 +9832,24 @@ Each object in the array must strictly match the following JSON structure:
                         r="26"
                         fill="transparent"
                         stroke={
-                          gameMode === 'PRACTICE'
-                            ? '#8a93c0'
-                            : (timeLeft / currentQuestionTimeLimit) >= 0.7
-                              ? '#00ff87'
-                              : (timeLeft / currentQuestionTimeLimit) >= 0.4
-                                ? '#ffcc00'
-                                : '#ff3b5c'
+                          activePowerUps.includes('FREEZE')
+                            ? '#00f2fe'
+                            : gameMode === 'PRACTICE'
+                              ? '#8a93c0'
+                              : (timeLeft / currentQuestionTimeLimit) >= 0.7
+                                ? '#00ff87'
+                                : (timeLeft / currentQuestionTimeLimit) >= 0.4
+                                  ? '#ffcc00'
+                                  : '#ff3b5c'
                         }
                         strokeWidth="4"
                         strokeDasharray="163.36"
                         strokeDashoffset={
-                          gameMode === 'PRACTICE'
-                            ? 0
-                            : 163.36 * (1 - timeLeft / currentQuestionTimeLimit)
+                          activePowerUps.includes('FREEZE')
+                            ? 163.36 * (1 - timeLeft / currentQuestionTimeLimit)
+                            : gameMode === 'PRACTICE'
+                              ? 0
+                              : 163.36 * (1 - timeLeft / currentQuestionTimeLimit)
                         }
                         strokeLinecap="round"
                         style={{ transition: 'stroke-dashoffset 1s linear, stroke 0.3s ease' }}
@@ -9763,15 +9859,18 @@ Each object in the array must strictly match the following JSON structure:
                       position: 'absolute',
                       fontSize: '1.1rem',
                       fontWeight: 800,
-                      color: gameMode === 'PRACTICE'
-                        ? '#8a93c0'
-                        : (timeLeft / currentQuestionTimeLimit) >= 0.7
-                          ? '#00ff87'
-                          : (timeLeft / currentQuestionTimeLimit) >= 0.4
-                            ? '#ffcc00'
-                            : '#ff3b5c'
+                      color: activePowerUps.includes('FREEZE')
+                        ? '#00f2fe'
+                        : gameMode === 'PRACTICE'
+                          ? '#8a93c0'
+                          : (timeLeft / currentQuestionTimeLimit) >= 0.7
+                            ? '#00ff87'
+                            : (timeLeft / currentQuestionTimeLimit) >= 0.4
+                              ? '#ffcc00'
+                              : '#ff3b5c',
+                      textShadow: activePowerUps.includes('FREEZE') ? '0 0 8px rgba(0, 242, 254, 0.6)' : 'none'
                     }}>
-                      {gameMode === 'PRACTICE' ? '∞' : timeLeft}
+                      {gameMode === 'PRACTICE' && !activePowerUps.includes('FREEZE') ? '∞' : timeLeft}
                     </div>
                   </div>
                   <span style={styles.hudRoundCounter}>{t.round} {currentQIndex + 1}/{gameQuestions.length}</span>
@@ -9951,7 +10050,7 @@ Each object in the array must strictly match the following JSON structure:
                       }}
                       style={{
                         ...styles.tfCardBtn,
-                        borderColor: selectedOption === 'true' ? '#00ff87' : 'rgba(255, 255, 255, 0.08)',
+                        borderColor: selectedOption === 'true' ? '#00ff87' : activePowerUps.includes('JOKER') ? '#ffd700' : 'rgba(255, 255, 255, 0.08)',
                         backgroundColor: selectedOption === 'true' ? 'rgba(0, 255, 135, 0.08)' : 'rgba(17, 19, 31, 0.65)',
                         opacity: hiddenOptions.includes('true') ? 0.25 : 1,
                         cursor: hiddenOptions.includes('true') ? 'not-allowed' : 'pointer',
@@ -9959,10 +10058,13 @@ Each object in the array must strictly match the following JSON structure:
                         flexDirection: 'column',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        gap: '4px'
+                        gap: '4px',
+                        animation: activePowerUps.includes('JOKER') ? 'goldPulse 1.5s infinite' : 'none',
+                        borderWidth: activePowerUps.includes('JOKER') ? '1.5px' : '1px',
+                        transition: 'all 0.3s ease'
                       }}
                     >
-                      <span>✓ TRUE / صحيح</span>
+                      <span>✓ TRUE / صحيح {activePowerUps.includes('JOKER') && '✨'}</span>
                       {bt === 'TEAM_CONSULTATION' && teammateVotes['true']?.length > 0 && (
                         <div style={{
                           fontSize: '0.75rem',
@@ -9990,7 +10092,7 @@ Each object in the array must strictly match the following JSON structure:
                       }}
                       style={{
                         ...styles.tfCardBtn,
-                        borderColor: selectedOption === 'false' ? '#ff3b5c' : 'rgba(255, 255, 255, 0.08)',
+                        borderColor: selectedOption === 'false' ? '#ff3b5c' : activePowerUps.includes('JOKER') ? '#ffd700' : 'rgba(255, 255, 255, 0.08)',
                         backgroundColor: selectedOption === 'false' ? 'rgba(255, 59, 92, 0.08)' : 'rgba(17, 19, 31, 0.65)',
                         opacity: hiddenOptions.includes('false') ? 0.25 : 1,
                         cursor: hiddenOptions.includes('false') ? 'not-allowed' : 'pointer',
@@ -9998,10 +10100,13 @@ Each object in the array must strictly match the following JSON structure:
                         flexDirection: 'column',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        gap: '4px'
+                        gap: '4px',
+                        animation: activePowerUps.includes('JOKER') ? 'goldPulse 1.5s infinite' : 'none',
+                        borderWidth: activePowerUps.includes('JOKER') ? '1.5px' : '1px',
+                        transition: 'all 0.3s ease'
                       }}
                     >
-                      <span>✕ FALSE / خطأ</span>
+                      <span>✕ FALSE / خطأ {activePowerUps.includes('JOKER') && '✨'}</span>
                       {bt === 'TEAM_CONSULTATION' && teammateVotes['false']?.length > 0 && (
                         <div style={{
                           fontSize: '0.75rem',
@@ -10020,7 +10125,12 @@ Each object in the array must strictly match the following JSON structure:
                 {(gameQuestions[currentQIndex].type === 'FILL_IN_THE_BLANK' ||
                   gameQuestions[currentQIndex].type === 'CALCULATION_QUESTION' ||
                   gameQuestions[currentQIndex].type === 'SHORT_ANSWER') && (
-                  <div style={styles.blankInputWrapper}>
+                  <div style={{
+                    ...styles.blankInputWrapper,
+                    animation: activePowerUps.includes('JOKER') ? 'goldPulse 1.5s infinite' : 'none',
+                    border: activePowerUps.includes('JOKER') ? '1.5px solid #ffd700' : '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '8px'
+                  }}>
                     <input
                       style={styles.blankInputField}
                       type="text"
@@ -12437,6 +12547,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     zIndex: 1
   },
   screenContainer: {
+    position: 'relative',
     width: '100%',
     height: '100%',
     zIndex: 5,
